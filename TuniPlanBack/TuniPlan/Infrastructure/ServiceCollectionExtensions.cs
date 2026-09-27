@@ -99,11 +99,15 @@ public static class ServiceCollectionExtensions
         });
 
         var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-        services.AddCors(o => o.AddPolicy(CorsPolicy, p => p
-            .WithOrigins(origins)
-            .WithMethods("GET", "POST", "PUT", "DELETE")
-            .WithHeaders("Authorization", "Content-Type", "Accept-Language")
-            .SetPreflightMaxAge(TimeSpan.FromHours(1))));
+      services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
+{
+    // "*" = any website may call the API (safe here: auth uses Bearer tokens, not cookies)
+    if (origins.Contains("*")) p.AllowAnyOrigin();
+    else p.WithOrigins(origins);
+    p.WithMethods("GET", "POST", "PUT", "DELETE")
+     .WithHeaders("Authorization", "Content-Type", "Accept-Language")
+     .SetPreflightMaxAge(TimeSpan.FromHours(1));
+}));
 
         return services;
     }
