@@ -1,0 +1,10 @@
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+TuniPlan/keys/
+TuniPlan/logs/
+TuniPlan/wwwroot/uploads/*
+!TuniPlan/wwwroot/uploads/.gitkeep
+appsettings.Production.json
