@@ -1,8 +1,15 @@
+# ---------------------------------------------------------------------------
+# Deploy TuniPlan API to MonsterASP.NET
+#
+# Place this file at the ROOT of the repository:  .github/workflows/deploy.yml
+# The .NET solution (TuniPlan.sln) is inside the sub-folder "TuniPlanBack".
+# If your sub-folder has another name, change it on the "working-directory" line below.
+# ---------------------------------------------------------------------------
 name: Deploy TuniPlan API to MonsterASP.NET
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 concurrency:
@@ -12,6 +19,10 @@ concurrency:
 jobs:
   build_and_deploy:
     runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: TuniPlanBack   # <-- folder that contains TuniPlan.sln
 
     steps:
       - name: Checkout
@@ -48,7 +59,8 @@ jobs:
           Set-Content -Path TuniPlan/appsettings.Production.json -Value $env:APPSETTINGS -Encoding utf8
 
       - name: Publish
-        run: dotnet publish TuniPlan/TuniPlan.csproj --configuration Release --output ./publish --runtime win-x86 --self-contained false
+        # Output goes to <repo root>\publish, where the deploy action looks for it
+        run: dotnet publish TuniPlan/TuniPlan.csproj --configuration Release --output "${{ github.workspace }}/publish" --runtime win-x86 --self-contained false
 
       - name: Deploy via WebDeploy
         uses: rasmusbuchholdt/simply-web-deploy@2.1.0
