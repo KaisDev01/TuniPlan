@@ -1,0 +1,54 @@
+### TuniPlan API — quick tests (Visual Studio / Rider / VS Code REST Client)
+@host = https://localhost:7180
+@token = paste-access-token-here
+
+### Reference data
+GET {{host}}/api/reference
+
+### Register a client (DevCode is returned in Development)
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "accountType": "Client",
+  "firstName": "Amine",
+  "lastName": "Ben Salah",
+  "phoneNumber": "98 765 432",
+  "email": "amine@example.com",
+  "password": "MonMotDePasse2026"
+}
+
+### Verify the phone (use the devCode from the previous answer)
+POST {{host}}/api/auth/verify-phone
+Content-Type: application/json
+
+{ "phoneNumber": "98765432", "code": "123456", "deviceName": "iPhone Amine" }
+
+### Login with a demo account (password: TuniPlan#2026)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "identifier": "kais@tuniplan.demo", "password": "TuniPlan#2026", "deviceName": "Postman" }
+
+### Refresh
+POST {{host}}/api/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "paste-refresh-token-here" }
+
+### Search businesses
+GET {{host}}/api/organizations?category=Beauty&governorate=Tunis&sort=rating
+
+### Business page by slug
+GET {{host}}/api/organizations/by-slug/maison-lilia
+
+### My appointments
+GET {{host}}/api/appointments?scope=upcoming
+Authorization: Bearer {{token}}
+
+### AI secretary
+POST {{host}}/api/ai-secretary/chat
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "organizationId": "00000000-0000-0000-0000-000000000000", "message": "nheb rdv ghodwa l3chiya" }
