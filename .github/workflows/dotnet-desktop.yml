@@ -1,0 +1,70 @@
+name: Deploy TuniPlan API to MonsterASP.NET
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-monsterasp
+  cancel-in-progress: false
+
+jobs:
+  build_and_deploy:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore TuniPlan.sln
+
+      - name: Build
+        run: dotnet build TuniPlan.sln --configuration Release --no-restore
+
+      - name: Unit tests
+        run: dotnet test TuniPlan.sln --configuration Release --no-build --verbosity normal
+
+      - name: Check that EF migrations exist
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "Data/DAL/Migrations")) {
+            Write-Error "Data/DAL/Migrations is missing. Run 'dotnet ef migrations add InitialCreate' locally and commit it."
+            exit 1
+          }
+
+      - name: Write production settings
+        shell: pwsh
+        env:
+          APPSETTINGS: ${{ secrets.APPSETTINGS_PRODUCTION }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:APPSETTINGS)) { Write-Error "Secret APPSETTINGS_PRODUCTION is empty"; exit 1 }
+          Set-Content -Path TuniPlan/appsettings.Production.json -Value $env:APPSETTINGS -Encoding utf8
+
+      - name: Publish
+        run: dotnet publish TuniPlan/TuniPlan.csproj --configuration Release --output ./publish --runtime win-x86 --self-contained false
+
+      - name: Deploy via WebDeploy
+        uses: rasmusbuchholdt/simply-web-deploy@2.1.0
+        with:
+          website-name: ${{ secrets.WEBSITE_NAME }}
+          server-computer-name: ${{ secrets.SERVER_COMPUTER_NAME }}
+          server-username: ${{ secrets.SERVER_USERNAME }}
+          server-password: ${{ secrets.SERVER_PASSWORD }}
+
+      - name: Wake up the API (runs the database migration)
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 20
+          try {
+            $r = Invoke-WebRequest -Uri "https://tuniplan.runasp.net/health" -UseBasicParsing -TimeoutSec 120
+            Write-Host "Health: $($r.StatusCode) $($r.Content)"
+          } catch {
+            Write-Warning "Health check failed: $($_.Exception.Message). Open https://tuniplan.runasp.net/health manually."
+          }
