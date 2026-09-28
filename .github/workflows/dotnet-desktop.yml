@@ -56,7 +56,12 @@ jobs:
           APPSETTINGS: ${{ secrets.APPSETTINGS_PRODUCTION }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:APPSETTINGS)) { Write-Error "Secret APPSETTINGS_PRODUCTION is empty"; exit 1 }
-          Set-Content -Path TuniPlan/appsettings.Production.json -Value $env:APPSETTINGS -Encoding utf8
+          $settings = $env:APPSETTINGS | ConvertFrom-Json -AsHashtable
+          # The front-end domain (public links) and CORS origins are not secrets: they come from TuniPlan/appsettings.json (git).
+          # Old values left in the secret (e.g. votre-front.vercel.app) must not override them.
+          if ($settings['App']) { $settings['App'].Remove('PublicWebUrl') }
+          $settings.Remove('Cors')
+          $settings | ConvertTo-Json -Depth 20 | Set-Content -Path TuniPlan/appsettings.Production.json -Encoding utf8
 
       - name: Publish
         # Output goes to <repo root>\publish, where the deploy action looks for it

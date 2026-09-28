@@ -227,7 +227,10 @@ public sealed class AccountManager(
         user.TwoFactorSecretProtected = null;
         user.SecurityStamp = Guid.NewGuid().ToString("N");
         await audit.AddAsync("account_deleted", user.Id, null, ct);
-        uow.Users.Remove(user); // soft delete (interceptor)
+        // Soft delete by setting the flags: Remove() would cascade immediately to the tracked children
+        // (refresh tokens hard-deleted, owned NotificationSettings set to NULL -> SQL error 500)
+        user.IsDeleted = true;
+        user.DeletedAt = DateTime.UtcNow;
         await uow.SaveChangesAsync(ct);
         sessionCache.Invalidate(user.Id);
     }

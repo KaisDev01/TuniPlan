@@ -24,13 +24,17 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
     {
         if (context is null) return;
         var now = DateTime.UtcNow;
-        foreach (var entry in context.ChangeTracker.Entries())
+        foreach (var entry in context.ChangeTracker.Entries().ToList())
         {
             if (entry.Entity is ISoftDelete soft && entry.State == EntityState.Deleted)
             {
                 entry.State = EntityState.Modified;
                 soft.IsDeleted = true;
                 soft.DeletedAt = now;
+                // Owned types live in the same row: they must survive the soft delete (else EF writes NULL in NOT NULL columns)
+                foreach (var owned in entry.References.Select(r => r.TargetEntry)
+                             .Where(t => t is not null && t.Metadata.IsOwned() && t.State == EntityState.Deleted))
+                    owned!.State = EntityState.Unchanged;
             }
 
             if (entry.Entity is BaseEntity baseEntity)
