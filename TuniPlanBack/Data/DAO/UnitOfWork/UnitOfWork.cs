@@ -44,6 +44,8 @@ public sealed class UnitOfWork(TuniPlanDbContext context) : IUnitOfWork
     public IGenericRepository<Notification> Notifications => Repository<Notification>();
     public IGenericRepository<AiConversation> AiConversations => Repository<AiConversation>();
     public IGenericRepository<AiMessage> AiMessages => Repository<AiMessage>();
+    public IGenericRepository<UserDevice> UserDevices => Repository<UserDevice>();
+    public IGenericRepository<ExternalLogin> ExternalLogins => Repository<ExternalLogin>();
 
     public IGenericRepository<T> Repository<T>() where T : class =>
         (IGenericRepository<T>)_repositories.GetOrAdd(typeof(T), _ => new GenericRepository<T>(context));

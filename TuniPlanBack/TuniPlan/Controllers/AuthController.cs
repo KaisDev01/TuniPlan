@@ -32,6 +32,14 @@ public sealed class AuthController(IAuthManager auth) : ControllerBase
     public async Task<ActionResult<LoginResponse>> Login(LoginRequest request, CancellationToken ct) =>
         Ok(await auth.LoginAsync(request, ct));
 
+    /// <summary>
+    /// Login / sign-up with Google (ID token) or Facebook (access token). First time: answers requiresPhoneNumber,
+    /// then requiresPhoneVerification (SMS code → /verify-phone). An account with the same verified email is linked automatically.
+    /// </summary>
+    [AllowAnonymous, HttpPost("external")]
+    public async Task<ActionResult<LoginResponse>> External(ExternalLoginRequest request, CancellationToken ct) =>
+        Ok(await auth.ExternalLoginAsync(request, ct));
+
     [AllowAnonymous, HttpPost("login/2fa")]
     public async Task<ActionResult<AuthResponse>> LoginTwoFactor(TwoFactorLoginRequest request, CancellationToken ct) =>
         Ok(await auth.LoginTwoFactorAsync(request, ct));

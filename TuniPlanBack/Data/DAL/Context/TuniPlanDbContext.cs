@@ -13,6 +13,8 @@ public class TuniPlanDbContext(DbContextOptions<TuniPlanDbContext> options) : Db
     public DbSet<FamilyMember> FamilyMembers => Set<FamilyMember>();
     public DbSet<Favorite> Favorites => Set<Favorite>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<UserDevice> UserDevices => Set<UserDevice>();
+    public DbSet<ExternalLogin> ExternalLogins => Set<ExternalLogin>();
 
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<OrganizationMember> OrganizationMembers => Set<OrganizationMember>();
@@ -80,6 +82,8 @@ public class TuniPlanDbContext(DbContextOptions<TuniPlanDbContext> options) : Db
         (typeof(User), typeof(FamilyMember)),
         (typeof(User), typeof(Favorite)),
         (typeof(User), typeof(Notification)),
+        (typeof(User), typeof(UserDevice)),
+        (typeof(User), typeof(ExternalLogin)),
         (typeof(Organization), typeof(OrganizationPhoto)),
         (typeof(Organization), typeof(OpeningHour)),
         (typeof(Service), typeof(ServiceResource)),

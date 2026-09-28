@@ -5,7 +5,9 @@ using Common.Helpers;
 using Common.Security;
 using DAL.Context;
 using DAO;
+using BL.Interfaces;
 using DTOs.Auth;
+using Entities.Enums;
 using Microsoft.EntityFrameworkCore;
 using Tests.Unit.Fakes;
 using MsOptions = Microsoft.Extensions.Options.Options;
@@ -19,13 +21,14 @@ public class AuthManagerTests : IAsyncLifetime
     private readonly CapturingSms _sms = new();
     private readonly FakeCurrentUser _currentUser = new();
     private readonly FakeSessionCache _sessions = new();
+    private readonly FakeExternalVerifier _external = new();
 
     public Task InitializeAsync()
     {
         _db = TestDb.Create();
         var uow = new UnitOfWork(_db);
         _auth = new AuthManager(uow, new Pbkdf2PasswordHasher(), new FakeTokenService(), new FakeProtector(), _sessions, _sms,
-            _currentUser, new AuditManager(uow, _currentUser), new NullLoggerManager(), new SystemClock(),
+            _currentUser, new AuditManager(uow, _currentUser), _external, new NullLoggerManager(), new SystemClock(),
             MsOptions.Create(new JwtOptions { SigningKey = new string('k', 40) }),
             MsOptions.Create(new SecurityOptions { ExposeDevCodes = true, VerificationCodeResendSeconds = 0 }));
         return Task.CompletedTask;
@@ -181,5 +184,44 @@ public class AuthManagerTests : IAsyncLifetime
         var user = await _db.Users.SingleAsync();
 
         Assert.Equal(DateTimeKind.Utc, user.CreatedAt.Kind);
+    }
+
+    private const string GoogleToken = "google-id-token-for-tests";
+
+    [Fact]
+    public async Task External_login_creates_account_after_phone_verification()
+    {
+        _external.Identities[GoogleToken] = new ExternalIdentity(ExternalProvider.Google, "g-123", "nour@example.com", true, "Nour", "Trabelsi");
+
+        var first = await _auth.ExternalLoginAsync(new ExternalLoginRequest { Provider = ExternalProvider.Google, Token = GoogleToken });
+        Assert.True(first.RequiresPhoneNumber);
+
+        var second = await _auth.ExternalLoginAsync(new ExternalLoginRequest { Provider = ExternalProvider.Google, Token = GoogleToken, PhoneNumber = "22 333 444" });
+        Assert.True(second.RequiresPhoneVerification);
+        var auth = await _auth.VerifyPhoneAsync(new VerifyPhoneRequest { PhoneNumber = "22333444", Code = second.DevCode! });
+        Assert.Equal("Nour", auth.User.FirstName);
+
+        // Next time: logged in directly with the linked Google identity
+        var again = await _auth.ExternalLoginAsync(new ExternalLoginRequest { Provider = ExternalProvider.Google, Token = GoogleToken });
+        Assert.NotNull(again.Auth);
+    }
+
+    [Fact]
+    public async Task External_login_links_existing_account_with_same_verified_email()
+    {
+        var existing = await RegisterAndVerifyAsync();
+        _external.Identities[GoogleToken] = new ExternalIdentity(ExternalProvider.Google, "g-456", "amine@example.com", true, "Amine", "B");
+
+        var login = await _auth.ExternalLoginAsync(new ExternalLoginRequest { Provider = ExternalProvider.Google, Token = GoogleToken });
+
+        Assert.Equal(existing.User.Id, login.Auth!.User.Id);
+        Assert.Equal(1, await _db.ExternalLogins.CountAsync());
+    }
+
+    [Fact]
+    public async Task External_login_rejects_invalid_token()
+    {
+        await Assert.ThrowsAsync<UnauthorizedException>(() =>
+            _auth.ExternalLoginAsync(new ExternalLoginRequest { Provider = ExternalProvider.Facebook, Token = "not-a-valid-token-value" }));
     }
 }

@@ -163,3 +163,22 @@ public sealed record TransferOrganizationRequest
     /// <summary>Email or phone number of the new owner (an existing account with business mode enabled).</summary>
     [Required, StringLength(256)] public string NewOwnerIdentifier { get; init; } = default!;
 }
+
+[System.ComponentModel.Description("Image slot of POST /api/business/organizations/{orgId}/images/{kind} (JPG, PNG or WEBP, 5 MB max).")]
+public enum ImageKind
+{
+    [System.ComponentModel.Description("Square logo; replaces the previous one.")] Logo = 0,
+    [System.ComponentModel.Description("Cover banner of the business page; replaces the previous one.")] Cover = 1,
+    [System.ComponentModel.Description("Gallery photo, added to the list (12 max, remove with DELETE .../photos?url=).")] Photo = 2
+}
+
+/// <summary>A user who can manage the business (owner) or work in it (staff: agenda, requests, clients, reviews).</summary>
+public sealed record MemberDto(Guid UserId, string FullName, string? Email, string PhoneNumberMasked, MemberRole Role, DateTime AddedAt, bool IsMe);
+
+public sealed record AddMemberRequest
+{
+    /// <summary>Email or phone number of an existing TuniPlan account (business mode is enabled for them automatically).</summary>
+    [Required, StringLength(256)] public string Identifier { get; init; } = default!;
+    /// <summary>Staff (default) or Owner (full control, including delete and transfer).</summary>
+    public MemberRole Role { get; init; } = MemberRole.Staff;
+}

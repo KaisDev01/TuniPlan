@@ -24,4 +24,10 @@
     <ProjectReference Include="..\AI\AIL\AIL.csproj" />
     <ProjectReference Include="..\AI\IAConnectors\IAConnectors.csproj" />
   </ItemGroup>
+  <!-- Lets the OpenAPI XML-comment generator read the DTO / entity comments of referenced projects -->
+  <Target Name="AddReferencedXmlDocs" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <AdditionalFiles Include="@(ReferencePath->'%(RootDir)%(Directory)%(Filename).xml')" Condition="'%(ReferencePath.ReferenceSourceTarget)' == 'ProjectReference' And Exists('%(RootDir)%(Directory)%(Filename).xml')" />
+    </ItemGroup>
+  </Target>
 </Project>

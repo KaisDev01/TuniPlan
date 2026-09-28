@@ -106,3 +106,26 @@ public class NotificationConfiguration : IEntityTypeConfiguration<Notification>
         b.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
     }
 }
+
+public class UserDeviceConfiguration : IEntityTypeConfiguration<UserDevice>
+{
+    public void Configure(EntityTypeBuilder<UserDevice> b)
+    {
+        b.Property(x => x.Token).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Platform).HasMaxLength(20);
+        b.Property(x => x.DeviceName).HasMaxLength(200);
+        b.HasIndex(x => x.Token).IsUnique();
+        b.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
+    }
+}
+
+public class ExternalLoginConfiguration : IEntityTypeConfiguration<ExternalLogin>
+{
+    public void Configure(EntityTypeBuilder<ExternalLogin> b)
+    {
+        b.Property(x => x.ProviderKey).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Email).HasMaxLength(256);
+        b.HasIndex(x => new { x.Provider, x.ProviderKey }).IsUnique();
+        b.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
+    }
+}

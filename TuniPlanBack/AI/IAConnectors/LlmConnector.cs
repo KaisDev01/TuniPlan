@@ -98,6 +98,13 @@ public static class DependencyInjection
             services.AddHttpClient<ILlmConnector, AnthropicConnector>(c => c.Timeout = TimeSpan.FromSeconds(30));
         else
             services.AddSingleton<ILlmConnector, NoLlmConnector>();
+
+        var transcription = configuration.GetSection(TranscriptionOptions.Section);
+        services.Configure<TranscriptionOptions>(transcription);
+        if (string.Equals(transcription["Provider"], "OpenAI", StringComparison.OrdinalIgnoreCase))
+            services.AddHttpClient<ISpeechToTextConnector, OpenAiSpeechToTextConnector>(c => c.Timeout = TimeSpan.FromSeconds(60));
+        else
+            services.AddSingleton<ISpeechToTextConnector, NoSpeechToTextConnector>();
         return services;
     }
 

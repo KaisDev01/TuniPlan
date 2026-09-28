@@ -46,6 +46,24 @@ public sealed class BusinessOrganizationsController(IOrganizationManager organiz
         return NoContent();
     }
 
+    /// <summary>Team of the business (owners and staff).</summary>
+    [HttpGet("{orgId:guid}/members")]
+    public async Task<ActionResult<IReadOnlyList<MemberDto>>> Members(Guid orgId, CancellationToken ct) =>
+        Ok(await organizations.GetMembersAsync(orgId, ct));
+
+    /// <summary>Owner only. Adds an existing account (email or phone) as Staff or Owner.</summary>
+    [HttpPost("{orgId:guid}/members")]
+    public async Task<ActionResult<MemberDto>> AddMember(Guid orgId, AddMemberRequest request, CancellationToken ct) =>
+        StatusCode(StatusCodes.Status201Created, await organizations.AddMemberAsync(orgId, request, ct));
+
+    /// <summary>Owner only, or the member himself (leave the team). The last owner cannot be removed.</summary>
+    [HttpDelete("{orgId:guid}/members/{userId:guid}")]
+    public async Task<IActionResult> RemoveMember(Guid orgId, Guid userId, CancellationToken ct)
+    {
+        await organizations.RemoveMemberAsync(orgId, userId, ct);
+        return NoContent();
+    }
+
     /// <summary>Wizard step "Horaires".</summary>
     [HttpPut("{orgId:guid}/opening-hours")]
     public async Task<ActionResult<MyOrganizationDto>> OpeningHours(Guid orgId, IReadOnlyList<OpeningHourDto> hours, CancellationToken ct) =>
@@ -69,12 +87,12 @@ public sealed class BusinessOrganizationsController(IOrganizationManager organiz
     public async Task<ActionResult<MyOrganizationDto>> Unpublish(Guid orgId, CancellationToken ct) =>
         Ok(await organizations.SetPublishedAsync(orgId, false, ct));
 
-    /// <summary>Upload an image. kind = logo | cover | photo (JPG, PNG, WEBP, 5 MB max).</summary>
+    /// <summary>Upload an image. kind = logo | cover | photo (case-insensitive). JPG, PNG or WEBP, 5 MB max, multipart field "file".</summary>
     [HttpPost("{orgId:guid}/images/{kind}"), RequestSizeLimit(6 * 1024 * 1024)]
-    public async Task<ActionResult<MyOrganizationDto>> UploadImage(Guid orgId, string kind, IFormFile file, CancellationToken ct)
+    public async Task<ActionResult<MyOrganizationDto>> UploadImage(Guid orgId, ImageKind kind, IFormFile file, CancellationToken ct)
     {
         await using var stream = file.OpenReadStream();
-        return Ok(await organizations.UploadImageAsync(orgId, kind.ToLowerInvariant(), stream, file.FileName, file.ContentType, ct));
+        return Ok(await organizations.UploadImageAsync(orgId, kind.ToString().ToLowerInvariant(), stream, file.FileName, file.ContentType, ct));
     }
 
     [HttpDelete("{orgId:guid}/photos")]

@@ -85,7 +85,18 @@ public sealed class NotificationManager(
         var user = await uow.Users.GetByIdAsync(userId, ct);
         if (user?.NotificationSettings.PushEnabled == true)
         {
-            try { await push.SendAsync(userId, title, body, ct); }
+            try
+            {
+                var devices = await uow.UserDevices.Query().Where(d => d.UserId == userId).ToListAsync(ct);
+                if (devices.Count == 0) return;
+                // "data" lets the app open the right screen when the notification is tapped
+                var data = new Dictionary<string, string> { ["type"] = type.ToString() };
+                if (appointmentId is { } aid) data["appointmentId"] = aid.ToString();
+                if (organizationId is { } oid) data["organizationId"] = oid.ToString();
+
+                var invalid = await push.SendAsync(devices.Select(d => d.Token).ToList(), new PushMessage(title, body, data), ct);
+                if (invalid.Count > 0) uow.UserDevices.RemoveRange(devices.Where(d => invalid.Contains(d.Token))); // saved with the caller's SaveChanges
+            }
             catch (Exception ex) { logger.LogError(ex, "Push failed for {UserId}", userId); }
         }
     }

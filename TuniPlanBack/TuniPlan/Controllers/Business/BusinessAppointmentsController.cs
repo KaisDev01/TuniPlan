@@ -59,6 +59,17 @@ public sealed class BusinessAppointmentsController(IAppointmentManager appointme
     public async Task<ActionResult<AppointmentDto>> Note(Guid orgId, Guid id, BusinessNoteRequest request, CancellationToken ct) =>
         Ok(await appointments.UpdateBusinessNoteAsync(orgId, id, request, ct));
 
+    /// <summary>
+    /// Voice note (multipart field "file": m4a, mp3, wav, webm or ogg, 10 MB max): transcribed to text and summarized,
+    /// saved in voiceNoteTranscript / voiceNoteSummary. The audio is not kept. 503 when no transcription provider is configured.
+    /// </summary>
+    [HttpPost("{id:guid}/voice-note"), RequestSizeLimit(11 * 1024 * 1024)]
+    public async Task<ActionResult<AppointmentDto>> VoiceNote(Guid orgId, Guid id, IFormFile file, CancellationToken ct)
+    {
+        await using var stream = file.OpenReadStream();
+        return Ok(await appointments.AddVoiceNoteAsync(orgId, id, stream, file.FileName, file.ContentType, file.Length, ct));
+    }
+
     /// <summary>Quick add for walk-in or phone clients.</summary>
     [HttpPost("walk-in")]
     public async Task<ActionResult<AppointmentDto>> WalkIn(Guid orgId, WalkInRequest request, CancellationToken ct) =>

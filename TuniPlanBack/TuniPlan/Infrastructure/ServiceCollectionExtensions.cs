@@ -30,6 +30,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IUserSessionCache, UserSessionCache>();
         services.AddScoped<SecurityStampValidator>();
         services.AddSingleton<ISecretProtector, DataProtectionSecretProtector>();
+        services.Configure<ExternalAuthOptions>(configuration.GetSection(ExternalAuthOptions.Section));
+        services.AddHttpClient<IExternalIdentityVerifier, ExternalIdentityVerifier>(c => c.Timeout = TimeSpan.FromSeconds(10));
 
         // Keys that encrypt TOTP secrets: persisted to disk so they survive restarts (use Azure Key Vault / Redis in a farm).
         var keysPath = configuration["DataProtection:KeysPath"] ?? Path.Combine(env.ContentRootPath, "keys");

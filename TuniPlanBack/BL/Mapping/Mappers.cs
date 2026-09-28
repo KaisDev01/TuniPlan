@@ -88,15 +88,30 @@ public static class Mappers
     public static string PublicName(User u) =>
         string.IsNullOrWhiteSpace(u.LastName) ? u.FirstName : $"{u.FirstName} {char.ToUpperInvariant(u.LastName[0])}.";
 
-    public static ReviewDto ToDto(this Review r) => new()
+    public const string AnonymousClientName = "Client anonyme";
+
+    /// <param name="viewerId">Connected user, to fill IsMine.</param>
+    /// <param name="editWindowDays">How long the author can edit the review after posting it.</param>
+    public static ReviewDto ToDto(this Review r, Guid? viewerId = null, int editWindowDays = 0)
     {
-        Id = r.Id,
-        ClientName = r.ClientUser is null ? "Client" : PublicName(r.ClientUser),
-        Rating = r.Rating, RatingWelcome = r.RatingWelcome, RatingPunctuality = r.RatingPunctuality,
-        RatingQuality = r.RatingQuality, RatingValue = r.RatingValue, Comment = r.Comment,
-        PhotoUrls = r.PhotoUrls, ServiceName = r.Appointment?.Service?.Name, CreatedAt = r.CreatedAt,
-        OwnerReply = r.OwnerReply, OwnerReplyAt = r.OwnerReplyAt
-    };
+        var isMine = viewerId is { } v && v == r.ClientUserId;
+        return new ReviewDto
+        {
+            Id = r.Id,
+            OrganizationId = r.OrganizationId,
+            OrganizationName = r.Organization?.Name,
+            AppointmentId = r.AppointmentId,
+            ClientName = r.IsAnonymous ? AnonymousClientName : r.ClientUser is null ? "Client" : PublicName(r.ClientUser),
+            IsAnonymous = r.IsAnonymous,
+            IsMine = isMine,
+            Rating = r.Rating, RatingWelcome = r.RatingWelcome, RatingPunctuality = r.RatingPunctuality,
+            RatingQuality = r.RatingQuality, RatingValue = r.RatingValue, Comment = r.Comment,
+            PhotoUrls = r.PhotoUrls, ServiceName = r.Appointment?.Service?.Name, CreatedAt = r.CreatedAt,
+            UpdatedAt = r.EditedAt,
+            EditableUntil = isMine ? r.CreatedAt.AddDays(editWindowDays) : null,
+            OwnerReply = r.OwnerReply, OwnerReplyAt = r.OwnerReplyAt
+        };
+    }
 
     public static NotificationDto ToDto(this Notification n) =>
         new(n.Id, n.Type, n.Title, n.Body, n.AppointmentId, n.OrganizationId, n.CreatedAt, n.ReadAt is not null);
@@ -135,6 +150,8 @@ public static class Mappers
             ClientNote = a.ClientNote,
             BusinessNote = forBusiness ? a.BusinessNote : null,
             AiSummary = forBusiness ? a.AiSummary : null,
+            VoiceNoteTranscript = forBusiness ? a.VoiceNoteTranscript : null,
+            VoiceNoteSummary = forBusiness ? a.VoiceNoteSummary : null,
             CancelReason = a.CancelReason,
             ProposedStartUtc = a.ProposedStartUtc,
             ProposedEndUtc = a.ProposedEndUtc,

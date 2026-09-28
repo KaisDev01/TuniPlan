@@ -1,5 +1,6 @@
 using System.Data;
 using System.Globalization;
+using AIL;
 using BL.Interfaces;
 using BL.Mapping;
 using BL.Options;
@@ -44,6 +45,7 @@ public interface IAppointmentManager
     Task<AppointmentDto> RescheduleByBusinessAsync(Guid organizationId, Guid id, RescheduleRequest request, CancellationToken ct = default);
     Task<AppointmentDto> CreateWalkInAsync(Guid organizationId, WalkInRequest request, CancellationToken ct = default);
     Task<AppointmentDto> UpdateBusinessNoteAsync(Guid organizationId, Guid id, BusinessNoteRequest request, CancellationToken ct = default);
+    Task<AppointmentDto> AddVoiceNoteAsync(Guid organizationId, Guid id, Stream audio, string fileName, string contentType, long length, CancellationToken ct = default);
 
     /// <summary>Used by the AI secretary: always creates a PENDING request (the owner must confirm).</summary>
     Task<AppointmentDto> BookFromAiAsync(BookAppointmentRequest request, string aiSummary, CancellationToken ct = default);
@@ -57,6 +59,7 @@ public sealed class AppointmentManager(
     IClientManager clients,
     INotificationManager notifications,
     IPaymentManager payments,
+    IVoiceNoteAssistant voiceNotes,
     IClock clock,
     IOptions<AppOptions> appOptions) : IAppointmentManager
 {
@@ -556,6 +559,44 @@ public sealed class AppointmentManager(
         }, IsolationLevel.Serializable, ct);
 
         return await LoadDtoAsync(appointment.Id, forBusiness: true, ct);
+    }
+
+    private const long MaxVoiceNoteBytes = 10 * 1024 * 1024;
+    private static readonly HashSet<string> VoiceNoteTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "audio/mp4", "audio/m4a", "audio/x-m4a", "audio/aac", "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
+        "audio/wave", "audio/webm", "audio/ogg", "audio/3gpp", "video/mp4", "video/webm"
+    };
+
+    /// <summary>Voice note of the business: speech-to-text, then a short summary saved on the appointment (audio is not kept).</summary>
+    public async Task<AppointmentDto> AddVoiceNoteAsync(Guid organizationId, Guid id, Stream audio, string fileName, string contentType,
+        long length, CancellationToken ct = default)
+    {
+        var a = await GetForOrgAsync(organizationId, id, ct);
+        if (!voiceNotes.IsAvailable)
+            throw new ServiceUnavailableException("La transcription des notes vocales n'est pas configurée sur le serveur.", "transcription_unavailable");
+        if (length == 0) throw new BadRequestException("Fichier audio vide.", "invalid_file");
+        if (length > MaxVoiceNoteBytes) throw new BadRequestException("Note vocale trop longue (10 Mo maximum).", "invalid_file");
+        if (!VoiceNoteTypes.Contains(contentType.Split(';')[0].Trim()))
+            throw new BadRequestException("Format audio non pris en charge (m4a, mp3, wav, webm, ogg).", "invalid_file");
+
+        VoiceNoteResult result;
+        try
+        {
+            var context = $"{a.Service?.Name} · {FormatLocal(a)}";
+            result = await voiceNotes.ProcessAsync(audio, fileName, contentType.Split(';')[0].Trim(), context, ct);
+        }
+        catch (HttpRequestException)
+        {
+            throw new ServiceUnavailableException("Le service de transcription ne répond pas. Réessayez plus tard.", "transcription_failed");
+        }
+        if (string.IsNullOrWhiteSpace(result.Transcript))
+            throw new BusinessRuleException("Aucune parole n'a été reconnue dans la note vocale.", "empty_transcript");
+
+        a.VoiceNoteTranscript = result.Transcript.Length > 4000 ? result.Transcript[..4000] : result.Transcript;
+        a.VoiceNoteSummary = result.Summary.Length > 1000 ? result.Summary[..1000] : result.Summary;
+        await uow.SaveChangesAsync(ct);
+        return a.ToDto(clock.UtcNow, true);
     }
 
     public async Task<AppointmentDto> UpdateBusinessNoteAsync(Guid organizationId, Guid id, BusinessNoteRequest request, CancellationToken ct = default)

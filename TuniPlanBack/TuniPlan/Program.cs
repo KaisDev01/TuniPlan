@@ -33,15 +33,19 @@ builder.Services
     .AddBusinessLayer(config)            // BL   : managers
     .AddApiSecurity(config, builder.Environment);
 
+// Enums as strings. Null properties ARE written ("field": null) so responses match the OpenAPI schema.
 builder.Services.AddControllers()
-    .AddJsonOptions(o =>
-    {
-        o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
-        o.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
-    });
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+// The OpenAPI generator reads these options (not the MVC ones): keep both in sync
+builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
-builder.Services.AddOpenApi(o => o.AddDocumentTransformer<BearerSecuritySchemeTransformer>());
+builder.Services.AddOpenApi(o =>
+{
+    o.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+    o.AddOperationTransformer<BearerSecurityOperationTransformer>();
+    o.AddSchemaTransformer<EnumSchemaTransformer>();
+});
 builder.Services.AddHealthChecks();
 builder.Services.AddHostedService<ReminderWorker>();
 builder.Services.Configure<ForwardedHeadersOptions>(o =>

@@ -32,6 +32,8 @@ public interface IAccountManager
     Task RemoveFavoriteAsync(Guid organizationId, CancellationToken ct = default);
 
     Task DeleteAccountAsync(DeleteAccountRequest request, CancellationToken ct = default);
+    Task<DeviceDto> RegisterDeviceAsync(RegisterDeviceRequest request, CancellationToken ct = default);
+    Task RemoveDeviceAsync(Guid id, CancellationToken ct = default);
 }
 
 public sealed class AccountManager(
@@ -215,6 +217,7 @@ public sealed class AccountManager(
         foreach (var a in future) { a.Status = AppointmentStatus.CancelledByClient; a.CancelledAt = now; a.CancelReason = "Compte supprimé"; }
 
         await uow.RefreshTokens.RevokeAllForUserAsync(user.Id, "account_deleted", ct);
+        uow.UserDevices.RemoveRange(await uow.UserDevices.Query().Where(d => d.UserId == user.Id).ToListAsync(ct)); // no more pushes
         user.IsActive = false;
         user.FirstName = "Utilisateur";
         user.LastName = "supprimé";
@@ -227,5 +230,34 @@ public sealed class AccountManager(
         uow.Users.Remove(user); // soft delete (interceptor)
         await uow.SaveChangesAsync(ct);
         sessionCache.Invalidate(user.Id);
+    }
+
+    // ------------------------------------------------------------ Push devices
+    public async Task<DeviceDto> RegisterDeviceAsync(RegisterDeviceRequest request, CancellationToken ct = default)
+    {
+        var userId = currentUser.RequireUserId();
+        var token = request.Token.Trim();
+        // One token = one phone: if another account used this phone before, the token moves to the current account
+        var device = await uow.UserDevices.FirstOrDefaultAsync(d => d.Token == token, ct);
+        if (device is null)
+        {
+            device = new UserDevice { UserId = userId, Token = token };
+            await uow.UserDevices.AddAsync(device, ct);
+        }
+        device.UserId = userId;
+        device.Platform = request.Platform;
+        device.DeviceName = request.DeviceName?.Trim();
+        device.LastSeenAt = DateTime.UtcNow;
+        await uow.SaveChangesAsync(ct);
+        return new DeviceDto(device.Id, device.Platform, device.DeviceName, device.CreatedAt, device.LastSeenAt);
+    }
+
+    public async Task RemoveDeviceAsync(Guid id, CancellationToken ct = default)
+    {
+        var userId = currentUser.RequireUserId();
+        var device = await uow.UserDevices.FirstOrDefaultAsync(d => d.Id == id && d.UserId == userId, ct)
+                     ?? throw new NotFoundException("Appareil introuvable.");
+        uow.UserDevices.Remove(device);
+        await uow.SaveChangesAsync(ct);
     }
 }

@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using Entities.Enums;
 
 namespace DTOs.Auth;
 
@@ -25,7 +27,12 @@ public sealed record VerifyPhoneRequest
     [StringLength(200)] public string? DeviceName { get; init; }
 }
 
-public enum CodePurpose { VerifyPhone = 0, ResetPassword = 2 }
+[Description("Why an SMS code is (re)sent by /api/auth/resend-code.")]
+public enum CodePurpose
+{
+    [Description("Confirm the phone number after /register (then call /verify-phone).")] VerifyPhone = 0,
+    [Description("Reset a forgotten password (then call /reset-password).")] ResetPassword = 2
+}
 
 public sealed record ResendCodeRequest
 {
@@ -48,6 +55,10 @@ public sealed record LoginResponse
     public Guid? ChallengeId { get; init; }
     public bool RequiresPhoneVerification { get; init; }
     public string? PhoneNumberMasked { get; init; }
+    /// <summary>Development only (Security:ExposeDevCodes): the SMS code sent for phone verification.</summary>
+    public string? DevCode { get; init; }
+    /// <summary>/auth/external only: first Google / Facebook login, ask the phone number and call again with phoneNumber.</summary>
+    public bool RequiresPhoneNumber { get; init; }
 }
 
 public sealed record TwoFactorLoginRequest
@@ -105,3 +116,19 @@ public sealed record TwoFactorCodeRequest
 }
 
 public sealed record SessionDto(Guid Id, string? DeviceName, string? IpAddress, DateTime CreatedAt, DateTime ExpiresAt);
+
+/// <summary>
+/// POST /api/auth/external. Flow: 1) send the provider token; 2) if requiresPhoneNumber, ask the phone and send again with phoneNumber;
+/// 3) if requiresPhoneVerification, call /verify-phone with the SMS code; otherwise the tokens are in auth.
+/// </summary>
+public sealed record ExternalLoginRequest
+{
+    [Required] public ExternalProvider Provider { get; init; }
+    /// <summary>Google: ID token (JWT). Facebook: user access token.</summary>
+    [Required, StringLength(4096, MinimumLength = 20)] public string Token { get; init; } = default!;
+    /// <summary>Only for the first login (account creation): Tunisian phone number, verified by SMS.</summary>
+    [StringLength(20)] public string? PhoneNumber { get; init; }
+    /// <summary>Only for account creation.</summary>
+    public AccountType AccountType { get; init; } = AccountType.Client;
+    [StringLength(200)] public string? DeviceName { get; init; }
+}

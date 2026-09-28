@@ -25,6 +25,7 @@ public interface IAuthManager
     Task<AuthResponse> LoginTwoFactorAsync(TwoFactorLoginRequest request, CancellationToken ct = default);
     Task<AuthResponse> RefreshAsync(RefreshRequest request, CancellationToken ct = default);
     Task LogoutAsync(LogoutRequest request, CancellationToken ct = default);
+    Task<LoginResponse> ExternalLoginAsync(ExternalLoginRequest request, CancellationToken ct = default);
     Task<string?> ForgotPasswordAsync(ForgotPasswordRequest request, CancellationToken ct = default);
     Task ResetPasswordAsync(ResetPasswordRequest request, CancellationToken ct = default);
     Task<AuthResponse> ChangePasswordAsync(ChangePasswordRequest request, CancellationToken ct = default);
@@ -44,6 +45,7 @@ public sealed class AuthManager(
     ISmsSender sms,
     ICurrentUser currentUser,
     IAuditManager audit,
+    IExternalIdentityVerifier externalIdentities,
     ILoggerManager logger,
     IClock clock,
     IOptions<JwtOptions> jwtOptions,
@@ -149,13 +151,89 @@ public sealed class AuthManager(
         user.AccessFailedCount = 0;
         user.LockoutEndUtc = null;
         if (hasher.NeedsRehash(user.PasswordHash)) user.PasswordHash = hasher.Hash(request.Password);
+        return await CompleteLoginAsync(user, request.DeviceName, "login", ct);
+    }
+
+    // ------------------------------------------------------------ Google / Facebook
+    public async Task<LoginResponse> ExternalLoginAsync(ExternalLoginRequest request, CancellationToken ct = default)
+    {
+        if (!externalIdentities.IsConfigured(request.Provider))
+            throw new ServiceUnavailableException($"La connexion {request.Provider} n'est pas configurée sur le serveur.", "provider_not_configured");
+        var identity = await externalIdentities.VerifyAsync(request.Provider, request.Token, ct);
+        if (identity is null)
+        {
+            logger.LogSecurity("External login refused: invalid {Provider} token from {Ip}", request.Provider, currentUser.IpAddress);
+            throw new UnauthorizedException("Connexion refusée par le fournisseur. Réessayez.", "invalid_external_token");
+        }
+
+        // 1. Identity already linked to an account
+        var link = await uow.ExternalLogins.FirstOrDefaultAsync(l => l.Provider == identity.Provider && l.ProviderKey == identity.ProviderKey, ct);
+        var user = link is null ? null : await uow.Users.FirstOrDefaultAsync(u => u.Id == link.UserId, ct);
+        if (user is not null) return await CompleteLoginAsync(user, request.DeviceName, $"login_{Lower(request.Provider)}", ct);
+
+        // 2. Same verified email as an existing account: link it
+        var email = identity.EmailVerified && !string.IsNullOrWhiteSpace(identity.Email) ? identity.Email.Trim().ToLowerInvariant() : null;
+        if (email is not null && await uow.Users.GetByEmailAsync(email, ct) is { } existing)
+        {
+            await LinkAsync(existing, identity, ct);
+            return await CompleteLoginAsync(existing, request.DeviceName, $"login_{Lower(request.Provider)}", ct);
+        }
+
+        // 3. New account: TuniPlan needs a verified Tunisian phone number
+        if (string.IsNullOrWhiteSpace(request.PhoneNumber)) return new LoginResponse { RequiresPhoneNumber = true };
+        var phone = NormalizePhoneOrThrow(request.PhoneNumber);
+        if (await uow.Users.PhoneExistsAsync(phone, ct))
+            throw new ConflictException("Ce numéro est déjà associé à un compte : connectez-vous avec votre mot de passe.", "phone_taken");
+
+        user = new User
+        {
+            FirstName = Name(identity.FirstName, "Client"),
+            LastName = Name(identity.LastName, ""),
+            PhoneNumber = phone,
+            Email = email,
+            EmailConfirmed = email is not null,
+            // Random password: the user can set one later with "mot de passe oublié"
+            PasswordHash = hasher.Hash(SecureRandom.Token(32)),
+            Roles = request.AccountType == AccountType.Business ? AccountRoles.Client | AccountRoles.Business : AccountRoles.Client
+        };
+        await uow.Users.AddAsync(user, ct);
+        await LinkAsync(user, identity, ct);
+        await audit.AddAsync("register", user.Id, $"{request.AccountType} via {request.Provider}", ct);
+        return await CompleteLoginAsync(user, request.DeviceName, $"login_{Lower(request.Provider)}", ct); // phone not verified yet: SMS code
+
+        static string Lower(ExternalProvider p) => p.ToString().ToLowerInvariant();
+        static string Name(string? value, string fallback)
+        {
+            var v = value?.Trim();
+            return string.IsNullOrEmpty(v) ? fallback : v.Length > 80 ? v[..80] : v;
+        }
+    }
+
+    private async Task LinkAsync(User user, ExternalIdentity identity, CancellationToken ct)
+    {
+        await uow.ExternalLogins.AddAsync(new ExternalLogin
+        {
+            UserId = user.Id, Provider = identity.Provider, ProviderKey = identity.ProviderKey, Email = identity.Email
+        }, ct);
+        await audit.AddAsync("external_login_linked", user.Id, identity.Provider.ToString(), ct);
+    }
+
+    /// <summary>After the credentials are checked (password or Google / Facebook): phone verification, 2FA, then tokens.</summary>
+    private async Task<LoginResponse> CompleteLoginAsync(User user, string? deviceName, string auditAction, CancellationToken ct)
+    {
+        if (!user.IsActive) throw new ForbiddenException("Ce compte est désactivé.", "account_disabled");
+        if (user.LockoutEndUtc is { } lockedUntil && lockedUntil > clock.UtcNow) throw new AccountLockedException(lockedUntil);
 
         if (!user.PhoneConfirmed)
         {
             var code = await CreateCodeAsync(user.PhoneNumber, VerificationPurpose.VerifyPhone, user.Id, ct, enforceCooldown: false);
             await uow.SaveChangesAsync(ct);
             await SendCodeSmsAsync(user.PhoneNumber, code, VerificationPurpose.VerifyPhone, ct);
-            return new LoginResponse { RequiresPhoneVerification = true, PhoneNumberMasked = PhoneNumberHelper.Mask(user.PhoneNumber) };
+            return new LoginResponse
+            {
+                RequiresPhoneVerification = true, PhoneNumberMasked = PhoneNumberHelper.Mask(user.PhoneNumber),
+                DevCode = _sec.ExposeDevCodes ? code : null
+            };
         }
 
         if (user.TwoFactorEnabled)
@@ -163,15 +241,15 @@ public sealed class AuthManager(
             var challenge = new VerificationCode
             {
                 UserId = user.Id, Target = user.Id.ToString(), Purpose = VerificationPurpose.MfaChallenge,
-                ExpiresAt = now.AddMinutes(_sec.MfaChallengeMinutes)
+                ExpiresAt = clock.UtcNow.AddMinutes(_sec.MfaChallengeMinutes)
             };
             await uow.VerificationCodes.AddAsync(challenge, ct);
             await uow.SaveChangesAsync(ct);
             return new LoginResponse { RequiresTwoFactor = true, ChallengeId = challenge.Id };
         }
 
-        await audit.AddAsync("login", user.Id, request.DeviceName, ct);
-        return new LoginResponse { Auth = await IssueTokensAsync(user, request.DeviceName, null, ct) };
+        await audit.AddAsync(auditAction, user.Id, deviceName, ct);
+        return new LoginResponse { Auth = await IssueTokensAsync(user, deviceName, null, ct) };
     }
 
     public async Task<AuthResponse> LoginTwoFactorAsync(TwoFactorLoginRequest request, CancellationToken ct = default)

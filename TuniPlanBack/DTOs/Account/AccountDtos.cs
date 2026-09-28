@@ -51,3 +51,15 @@ public sealed record DeleteAccountRequest
 {
     [Required] public string Password { get; init; } = default!;
 }
+
+/// <summary>POST /api/account/devices: call it after login and whenever Expo gives a new push token.</summary>
+public sealed record RegisterDeviceRequest
+{
+    /// <summary>Expo push token, e.g. "ExponentPushToken[xxxxxxxx]".</summary>
+    [Required, StringLength(200, MinimumLength = 10)] public string Token { get; init; } = default!;
+    /// <summary>ios | android | web</summary>
+    [RegularExpression("^(ios|android|web)$")] public string? Platform { get; init; }
+    [StringLength(200)] public string? DeviceName { get; init; }
+}
+
+public sealed record DeviceDto(Guid Id, string? Platform, string? DeviceName, DateTime CreatedAt, DateTime LastSeenAt);

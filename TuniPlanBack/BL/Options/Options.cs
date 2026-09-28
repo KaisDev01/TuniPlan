@@ -34,4 +34,6 @@ public sealed class AppOptions
     public string PublicWebUrl { get; set; } = "http://localhost:8081";
     public int MaxPendingRequestsPerClientPerOrganization { get; set; } = 3;
     public int BookingHorizonDays { get; set; } = 90;
+    /// <summary>The author can edit a review during this many days after posting it (deleting is always allowed).</summary>
+    public int ReviewEditWindowDays { get; set; } = 30;
 }

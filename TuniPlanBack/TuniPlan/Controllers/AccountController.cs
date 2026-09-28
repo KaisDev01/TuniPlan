@@ -71,6 +71,19 @@ public sealed class AccountController(IAccountManager account) : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Registers the Expo push token of this phone (idempotent). Keep the returned id to unregister it at logout.</summary>
+    [HttpPost("devices")]
+    public async Task<ActionResult<DeviceDto>> RegisterDevice(RegisterDeviceRequest request, CancellationToken ct) =>
+        Ok(await account.RegisterDeviceAsync(request, ct));
+
+    /// <summary>Stops push notifications on this device (call it before logout).</summary>
+    [HttpDelete("devices/{id:guid}")]
+    public async Task<IActionResult> RemoveDevice(Guid id, CancellationToken ct)
+    {
+        await account.RemoveDeviceAsync(id, ct);
+        return NoContent();
+    }
+
     /// <summary>Deletes (anonymizes) the account. Requires the password.</summary>
     [HttpPost("delete")]
     public async Task<IActionResult> Delete(DeleteAccountRequest request, CancellationToken ct)
