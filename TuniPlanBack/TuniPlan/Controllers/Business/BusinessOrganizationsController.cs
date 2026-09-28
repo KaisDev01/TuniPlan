@@ -30,6 +30,22 @@ public sealed class BusinessOrganizationsController(IOrganizationManager organiz
     public async Task<ActionResult<MyOrganizationDto>> Update(Guid orgId, UpsertOrganizationRequest request, CancellationToken ct) =>
         Ok(await organizations.UpdateAsync(orgId, request, ct));
 
+    /// <summary>Owner only. Deletes the business: upcoming bookings are cancelled and clients notified.</summary>
+    [HttpDelete("{orgId:guid}")]
+    public async Task<IActionResult> Delete(Guid orgId, CancellationToken ct)
+    {
+        await organizations.DeleteAsync(orgId, ct);
+        return NoContent();
+    }
+
+    /// <summary>Owner only. Gives the business to another account (email or phone); the current owner stays as staff.</summary>
+    [HttpPost("{orgId:guid}/transfer")]
+    public async Task<IActionResult> Transfer(Guid orgId, TransferOrganizationRequest request, CancellationToken ct)
+    {
+        await organizations.TransferOwnershipAsync(orgId, request, ct);
+        return NoContent();
+    }
+
     /// <summary>Wizard step "Horaires".</summary>
     [HttpPut("{orgId:guid}/opening-hours")]
     public async Task<ActionResult<MyOrganizationDto>> OpeningHours(Guid orgId, IReadOnlyList<OpeningHourDto> hours, CancellationToken ct) =>

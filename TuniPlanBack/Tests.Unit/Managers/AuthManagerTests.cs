@@ -160,4 +160,26 @@ public class AuthManagerTests : IAsyncLifetime
         await Assert.ThrowsAsync<UnauthorizedException>(() => _auth.RefreshAsync(new RefreshRequest { RefreshToken = auth.RefreshToken }));
         Assert.NotNull((await _auth.LoginAsync(new LoginRequest { Identifier = "98765432", Password = "NouveauMdp2026" })).Auth);
     }
+
+    [Fact]
+    public async Task Password_reset_accepts_email_identifier()
+    {
+        await RegisterAndVerifyAsync();
+        var devCode = await _auth.ForgotPasswordAsync(new ForgotPasswordRequest { Identifier = "amine@example.com" });
+
+        await _auth.ResetPasswordAsync(new ResetPasswordRequest { Identifier = "Amine@Example.com", Code = devCode!, NewPassword = "NouveauMdp2026" });
+
+        Assert.NotNull((await _auth.LoginAsync(new LoginRequest { Identifier = "amine@example.com", Password = "NouveauMdp2026" })).Auth);
+    }
+
+    [Fact]
+    public async Task Dates_are_read_back_as_utc()
+    {
+        await RegisterAndVerifyAsync();
+        _db.ChangeTracker.Clear();
+
+        var user = await _db.Users.SingleAsync();
+
+        Assert.Equal(DateTimeKind.Utc, user.CreatedAt.Kind);
+    }
 }

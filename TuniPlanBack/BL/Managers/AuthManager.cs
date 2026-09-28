@@ -265,12 +265,16 @@ public sealed class AuthManager(
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request, CancellationToken ct = default)
     {
-        var phone = NormalizePhoneOrThrow(request.PhoneNumber);
+        var identifier = string.IsNullOrWhiteSpace(request.Identifier) ? request.PhoneNumber : request.Identifier;
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw ValidationException.For(nameof(request.Identifier), "Indiquez votre email ou votre numéro de téléphone.");
         var errors = PasswordPolicy.Validate(request.NewPassword);
         if (errors.Count > 0) throw new ValidationException(new Dictionary<string, string[]> { [nameof(request.NewPassword)] = errors.ToArray() });
 
-        var user = await uow.Users.GetByPhoneAsync(phone, ct) ?? throw new BadRequestException("Code invalide ou expiré.", "invalid_code");
-        await ConsumeCodeAsync(phone, VerificationPurpose.ResetPassword, request.Code, ct);
+        // The code was sent to (and stored for) the account's phone, whatever identifier was used
+        var user = await FindByIdentifierAsync(identifier, ct);
+        if (user is null || !user.IsActive) throw new BadRequestException("Code invalide ou expiré.", "invalid_code");
+        await ConsumeCodeAsync(user.PhoneNumber, VerificationPurpose.ResetPassword, request.Code, ct);
 
         user.PasswordHash = hasher.Hash(request.NewPassword);
         user.PhoneConfirmed = true;

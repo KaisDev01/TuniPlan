@@ -519,6 +519,10 @@ public sealed class AppointmentManager(
         var end = start.AddMinutes(service.DurationMinutes);
         if (request.ResourceId is { } rid && !await uow.Resources.AnyAsync(r => r.Id == rid && r.OrganizationId == organizationId, ct))
             throw ValidationException.For(nameof(request.ResourceId), "Ressource inconnue.");
+        // An invalid phone used to be silently dropped: the appointment was then returned without clientPhone
+        var phone = string.IsNullOrWhiteSpace(request.ClientPhone) ? null
+            : PhoneNumberHelper.NormalizeTunisian(request.ClientPhone)
+              ?? throw ValidationException.For(nameof(request.ClientPhone), "Numéro de téléphone tunisien invalide (8 chiffres).");
 
         var appointment = await uow.ExecuteInTransactionAsync(async token =>
         {
@@ -531,12 +535,13 @@ public sealed class AppointmentManager(
                          ?? throw ValidationException.For(nameof(request.OrganizationClientId), "Client inconnu.");
             else
             {
-                if (string.IsNullOrWhiteSpace(request.ClientName) && string.IsNullOrWhiteSpace(request.ClientPhone))
+                if (string.IsNullOrWhiteSpace(request.ClientName) && phone is null)
                     throw ValidationException.For(nameof(request.ClientName), "Indiquez le nom ou le téléphone du client.");
-                var phone = PhoneNumberHelper.NormalizeTunisian(request.ClientPhone);
                 var user = phone is null ? null : await uow.Users.GetByPhoneAsync(phone, token);
                 client = await clients.EnsureClientAsync(organizationId, user, request.ClientName, phone, token);
             }
+            // Keep the phone given at the counter on the CRM record when it did not have one yet
+            if (phone is not null && client.PhoneNumber is null) client.PhoneNumber = phone;
 
             var a = new Appointment
             {

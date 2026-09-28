@@ -157,3 +157,9 @@ public sealed record CreateClosedPeriodRequest
 }
 
 public sealed record PublicLinkDto(string Url, string Slug, string QrPayload, string ShareText);
+
+public sealed record TransferOrganizationRequest
+{
+    /// <summary>Email or phone number of the new owner (an existing account with business mode enabled).</summary>
+    [Required, StringLength(256)] public string NewOwnerIdentifier { get; init; } = default!;
+}

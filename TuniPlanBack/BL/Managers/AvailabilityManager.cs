@@ -1,4 +1,5 @@
 using BL.Availability;
+using BL.Interfaces;
 using BL.Options;
 using Common.Exceptions;
 using Common.Helpers;
@@ -24,16 +25,22 @@ public interface IAvailabilityManager
         Guid? excludeAppointmentId = null, CancellationToken ct = default);
 }
 
-public sealed class AvailabilityManager(IUnitOfWork uow, IClock clock, IOptions<AppOptions> appOptions) : IAvailabilityManager
+public sealed class AvailabilityManager(IUnitOfWork uow, ICurrentUser currentUser, IClock clock, IOptions<AppOptions> appOptions) : IAvailabilityManager
 {
     public async Task<IReadOnlyList<DayAvailabilityDto>> GetAvailabilityAsync(Guid organizationId, AvailabilityQuery query, CancellationToken ct = default)
     {
         var org = await uow.Organizations.QueryNoTracking().Include(o => o.OpeningHours)
                       .FirstOrDefaultAsync(o => o.Id == organizationId, ct)
                   ?? throw new NotFoundException("Entreprise introuvable.");
-        var service = await uow.Services.QueryNoTracking().Include(s => s.ServiceResources)
-                          .FirstOrDefaultAsync(s => s.Id == query.ServiceId && s.OrganizationId == organizationId && s.IsActive, ct)
-                      ?? throw new NotFoundException("Prestation introuvable.");
+        // Unpublished businesses are invisible to the public (same rule as the business page)
+        if (!org.IsPublished && !await CanSeeUnpublishedAsync(org.Id, ct)) throw new NotFoundException("Entreprise introuvable.");
+
+        var services = uow.Services.QueryNoTracking().Include(s => s.ServiceResources)
+            .Where(s => s.OrganizationId == organizationId && s.IsActive);
+        var service = query.ServiceId is { } serviceId
+            ? await services.FirstOrDefaultAsync(s => s.Id == serviceId, ct) ?? throw new NotFoundException("Prestation introuvable.")
+            : await services.OrderBy(s => s.SortOrder).ThenBy(s => s.Name).FirstOrDefaultAsync(ct);
+        if (service is null) return []; // no active service yet: nothing can be booked
 
         var tz = TimeZoneHelper.Find(org.TimeZoneId);
         var today = DateOnly.FromDateTime(TimeZoneHelper.ToLocal(clock.UtcNow, tz));
@@ -43,6 +50,9 @@ public sealed class AvailabilityManager(IUnitOfWork uow, IClock clock, IOptions<
         if (from > horizon) return [];
         return await ComputeAsync(org, service, from, days, query.ResourceId, null, ct);
     }
+
+    private async Task<bool> CanSeeUnpublishedAsync(Guid orgId, CancellationToken ct) =>
+        currentUser.UserId is { } uid && (currentUser.IsInRole(Roles.Admin) || await uow.Organizations.IsMemberAsync(orgId, uid, null, ct));
 
     public async Task<IReadOnlyList<SlotDto>> GetNextSlotsAsync(Organization organization, Service service, int count, int days = 14,
         Guid? resourceId = null, CancellationToken ct = default)

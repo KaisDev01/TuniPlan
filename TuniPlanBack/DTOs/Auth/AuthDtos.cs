@@ -83,7 +83,10 @@ public sealed record ForgotPasswordRequest
 
 public sealed record ResetPasswordRequest
 {
-    [Required] public string PhoneNumber { get; init; } = default!;
+    /// <summary>Email or phone number (same value as in /forgot-password).</summary>
+    [StringLength(256)] public string? Identifier { get; init; }
+    /// <summary>Deprecated: use <see cref="Identifier"/>. Still accepted for older clients.</summary>
+    [StringLength(20)] public string? PhoneNumber { get; init; }
     [Required, StringLength(6, MinimumLength = 6)] public string Code { get; init; } = default!;
     [Required, StringLength(128, MinimumLength = 8)] public string NewPassword { get; init; } = default!;
 }

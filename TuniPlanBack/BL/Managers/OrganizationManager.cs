@@ -36,6 +36,8 @@ public interface IOrganizationManager
     Task<MyOrganizationDto> DeletePhotoAsync(Guid id, string url, CancellationToken ct = default);
     Task<ProfileCompletionDto> GetCompletionAsync(Guid id, CancellationToken ct = default);
     Task<PublicLinkDto> GetPublicLinkAsync(Guid id, CancellationToken ct = default);
+    Task DeleteAsync(Guid id, CancellationToken ct = default);
+    Task TransferOwnershipAsync(Guid id, TransferOrganizationRequest request, CancellationToken ct = default);
 
     Task<IReadOnlyList<ClosedPeriodDto>> GetClosedPeriodsAsync(Guid id, DateTime? fromUtc, CancellationToken ct = default);
     Task<ClosedPeriodDto> AddClosedPeriodAsync(Guid id, CreateClosedPeriodRequest request, CancellationToken ct = default);
@@ -53,6 +55,7 @@ public sealed class OrganizationManager(
     IAvailabilityManager availability,
     IFileStorage storage,
     INotificationManager notifications,
+    IAuditManager audit,
     IClock clock,
     IOptions<AppOptions> appOptions) : IOrganizationManager
 {
@@ -479,6 +482,71 @@ public sealed class OrganizationManager(
     }
 
     private string PublicUrl(Organization org) => $"{appOptions.Value.PublicWebUrl.TrimEnd('/')}/b/{org.Slug}";
+
+    // =========================================================== Delete / transfer
+    /// <summary>Soft delete: upcoming bookings are cancelled (clients notified), members and favorites are removed, the slug is freed.</summary>
+    public async Task DeleteAsync(Guid id, CancellationToken ct = default)
+    {
+        await access.EnsureMemberAsync(id, ownerOnly: true, ct);
+        var org = await uow.Organizations.FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw new NotFoundException("Entreprise introuvable.");
+        var now = clock.UtcNow;
+
+        var upcoming = await uow.Appointments.Query()
+            .Where(a => a.OrganizationId == id && a.StartUtc > now
+                        && (a.Status == AppointmentStatus.Pending || a.Status == AppointmentStatus.Confirmed || a.Status == AppointmentStatus.CounterProposed))
+            .ToListAsync(ct);
+        foreach (var a in upcoming)
+        {
+            a.Status = AppointmentStatus.CancelledByBusiness;
+            a.CancelledAt = now;
+            a.CancelReason = "Entreprise fermée sur TuniPlan";
+            if (a.ClientUserId is { } clientId)
+                await notifications.NotifyAsync(clientId, NotificationType.Cancellation, "Rendez-vous annulé",
+                    $"{org.Name} n'est plus disponible sur TuniPlan : votre rendez-vous a été annulé.", a.Id, id, ct);
+        }
+
+        uow.OrganizationMembers.RemoveRange(await uow.OrganizationMembers.ListAsync(m => m.OrganizationId == id, ct));
+        uow.Favorites.RemoveRange(await uow.Favorites.ListAsync(f => f.OrganizationId == id, ct));
+        uow.Waitlist.RemoveRange(await uow.Waitlist.ListAsync(w => w.OrganizationId == id, ct));
+
+        org.IsPublished = false;
+        org.Slug = $"deleted-{org.Id:N}"; // the unique slug can be reused by a new business
+        org.IsDeleted = true;
+        org.DeletedAt = now;
+        await audit.AddAsync("organization_deleted", currentUser.UserId, $"{org.Id} {org.Name}", ct);
+        await uow.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Gives the business to another account. The previous owner(s) stay as staff.</summary>
+    public async Task TransferOwnershipAsync(Guid id, TransferOrganizationRequest request, CancellationToken ct = default)
+    {
+        await access.EnsureMemberAsync(id, ownerOnly: true, ct);
+        var org = await uow.Organizations.QueryNoTracking().FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw new NotFoundException("Entreprise introuvable.");
+
+        var identifier = request.NewOwnerIdentifier.Trim();
+        var newOwner = PhoneNumberHelper.LooksLikeEmail(identifier)
+            ? await uow.Users.GetByEmailAsync(identifier.ToLowerInvariant(), ct)
+            : PhoneNumberHelper.NormalizeTunisian(identifier) is { } phone ? await uow.Users.GetByPhoneAsync(phone, ct) : null;
+        if (newOwner is null || !newOwner.IsActive)
+            throw ValidationException.For(nameof(request.NewOwnerIdentifier), "Aucun compte actif ne correspond à cet identifiant.");
+        if (!newOwner.Roles.HasFlag(AccountRoles.Business))
+            throw new BusinessRuleException("Le nouveau propriétaire doit d'abord activer le mode professionnel.", "business_mode_required");
+
+        var members = await uow.OrganizationMembers.ListAsync(m => m.OrganizationId == id, ct);
+        var target = members.FirstOrDefault(m => m.UserId == newOwner.Id);
+        if (target?.Role == MemberRole.Owner) throw new ConflictException("Ce compte est déjà propriétaire de l'entreprise.");
+        if (await uow.OrganizationMembers.CountAsync(m => m.UserId == newOwner.Id && m.Role == MemberRole.Owner, ct) >= 5)
+            throw new BusinessRuleException("Le nouveau propriétaire a déjà 5 établissements.");
+
+        foreach (var owner in members.Where(m => m.Role == MemberRole.Owner)) owner.Role = MemberRole.Staff;
+        if (target is null) await uow.OrganizationMembers.AddAsync(new OrganizationMember { OrganizationId = id, UserId = newOwner.Id, Role = MemberRole.Owner }, ct);
+        else target.Role = MemberRole.Owner;
+
+        await notifications.NotifyAsync(newOwner.Id, NotificationType.General, "Nouvelle entreprise",
+            $"Vous êtes maintenant propriétaire de {org.Name} sur TuniPlan.", null, id, ct);
+        await audit.AddAsync("organization_transferred", currentUser.UserId, $"{id} -> {newOwner.Id}", ct);
+        await uow.SaveChangesAsync(ct);
+    }
 
     // =========================================================== Closed periods (holidays, days off)
     public async Task<IReadOnlyList<ClosedPeriodDto>> GetClosedPeriodsAsync(Guid id, DateTime? fromUtc, CancellationToken ct = default)

@@ -73,19 +73,27 @@ Run tests: `dotnet test`.
 > *"Build the solution and fix all compile errors without changing the architecture."*
 > The most version-sensitive file is `TuniPlan/Infrastructure/BearerSecuritySchemeTransformer.cs` (OpenAPI 2.0 API).
 
-### Demo accounts (seeded in Development)
+### Demo accounts (seeded when `Database:SeedDemoData=true`)
 
-Password for all: **`TuniPlan#2026`** — login with the email or the phone number.
+Password for all: **`TuniPlan#2026`** (constant `DbSeeder.DemoPassword`) — login with the email or the phone number.
+The seeder only runs on an **empty** database; on a database that already has users, these accounts do not exist.
 
-| Account | Email | Role |
-|---|---|---|
-| Client | kais@tuniplan.demo | Client |
-| Cabinet médical (Sousse) | olfagharbi@tuniplan.demo | Business + Client |
-| Location voiture (rental mode) | voit25@tuniplan.demo | Business |
-| Avocate (Sfax) | salmakarray@tuniplan.demo | Business |
-| Pharmacie (queue/ticket mode) | pharmawifak@tuniplan.demo | Business |
-| Salon de coiffure (team of 2) | maisonlilia@tuniplan.demo | Business |
-| Admin | admin@tuniplan.demo | Admin + Business + Client |
+| Account | Email | Phone | Role |
+|---|---|---|---|
+| Client | kais@tuniplan.demo | +21622000001 | Client |
+| Cabinet médical (Sousse) | olfagharbi@tuniplan.demo | +21698000001 | Business + Client |
+| Location voiture (rental mode) | voit25@tuniplan.demo | +21698000002 | Business |
+| Avocate (Sfax) | salmakarray@tuniplan.demo | +21698000003 | Business |
+| Pharmacie (queue/ticket mode) | pharmawifak@tuniplan.demo | +21698000004 | Business |
+| Salon de coiffure (team of 2) | maisonlilia@tuniplan.demo | +21698000005 | Business |
+| Admin | admin@tuniplan.demo | +21620000000 | Admin + Business + Client |
+
+> Cabinet Dr. Karim Ben Ammar (Tunis) belongs to the Admin account.
+
+### Test data clean-up
+
+`scripts/cleanup-test-data.sql` removes the integration-test account `+21699887766` and business
+`01a0e8ab-9bcf-7bae-a829-eb369a444665` (soft delete + anonymisation, in a transaction you commit manually).
 
 ---
 
@@ -98,7 +106,7 @@ Password for all: **`TuniPlan#2026`** — login with the email or the phone numb
 | Access token | JWT HS256, **15 minutes**, issuer/audience/lifetime/algorithm validated, 30 s clock skew |
 | Refresh token | 512-bit random, **only the SHA-256 hash is stored**, 30 days, **rotation** on every use, **reuse detection** (an old token presented again revokes the whole session family) |
 | Instant revocation | `SecurityStamp` in every token: password change/reset, "logout all devices", account deletion → all access tokens rejected (checked on each request, 2-min cache invalidated on change) |
-| Brute force | Account **lockout** after 5 failed logins (15 min) + rate limiting: 10 req/min/IP on `/api/auth/*`, 20 msg/min on the AI, 300 req/min globally |
+| Brute force | Account **lockout** after 5 failed logins (15 min) + rate limiting: 30 req/min/IP on `/api/auth/*` (`RateLimits:AuthPerMinute`, 300 in Development), 20 msg/min on the AI, 300 req/min globally |
 | No enumeration | Same error for unknown user / wrong password (with equal timing), forgot-password always answers 202 |
 | 2FA (optional) | TOTP (Google/Microsoft Authenticator); secret encrypted with ASP.NET Data Protection; login returns a 5-min challenge |
 | Sessions | List active devices, revoke one session |
@@ -116,6 +124,9 @@ Password for all: **`TuniPlan#2026`** — login with the email or the phone numb
 5. Login: `POST /api/auth/login` `{ identifier: email or phone, password }` → may return
    `requiresPhoneVerification` or `requiresTwoFactor` + `challengeId` (then `POST /api/auth/login/2fa`).
 6. A client can become a business: `POST /api/account/business-mode`, then refresh/login to get the new role.
+7. Forgotten password: `POST /api/auth/forgot-password` `{ identifier }` then `POST /api/auth/reset-password`
+   `{ identifier, code, newPassword }` — `identifier` is the email or the phone (the old `phoneNumber` field still works).
+8. All dates are UTC and serialized with a trailing `Z` (e.g. `2026-09-28T08:00:00Z`): convert to local time in the app.
 
 ---
 
@@ -123,7 +134,7 @@ Password for all: **`TuniPlan#2026`** — login with the email or the phone numb
 
 **Public** — `GET /api/reference` (categories + 24 governorates) · `GET /api/organizations?q=&category=&governorate=&city=&date=&openNow=&minRating=&maxPrice=&sort=&lat=&lng=` ·
 `GET /api/organizations/{id}` and `/by-slug/{slug}` (full business page: photos, description, team, services with prices and promotions, hours, **review summary + latest reviews**, **next free slots**) ·
-`/{id}/availability?serviceId=&from=&days=&resourceId=` · `/{id}/reviews?sort=&withPhotos=&serviceId=` · `/{id}/reviews/summary`
+`/{id}/availability?serviceId=&from=&days=&resourceId=` (`serviceId` optional: first active service; unpublished businesses answer 404) · `/{id}/reviews?sort=&withPhotos=&serviceId=` · `/{id}/reviews/summary`
 
 **Client** — `/api/account/*` (profile, avatar, notification settings, family members, favorites, delete) ·
 `POST /api/appointments` (book: slot, rental days or queue ticket) · `GET /api/appointments?scope=upcoming|past` ·
@@ -131,7 +142,7 @@ Password for all: **`TuniPlan#2026`** — login with the email or the phone numb
 `/api/waitlist` · `POST /api/reviews` (verified: completed appointment only) · `/api/notifications` ·
 `/api/ai-secretary/chat` + `/requests` · `/api/payments/deposit`
 
-**Business** (`/api/business/organizations/...`) — create/update the business (wizard steps), `opening-hours`, `rules`,
+**Business** (`/api/business/organizations/...`) — create/update/`DELETE` the business (wizard steps), `transfer` (new owner by email or phone), `opening-hours`, `rules`,
 `verification`, `publish`, `images/{logo|cover|photo}`, `completion` (profile %), `public-link`, `closed-periods`,
 `services`, `resources`, `promotions`, `appointments` (agenda, `requests`, confirm / refuse / counter-offer / complete /
 no-show / cancel / reschedule / note / `walk-in`), `clients` (CRM), `reviews` (+ reply), `dashboard`.
@@ -156,7 +167,8 @@ a completed appointment, expiry of unanswered requests.
 | `Jwt` | Issuer, audience, **SigningKey (secret!)**, token lifetimes |
 | `Security` | Lockout, code rules, `ExposeDevCodes` (dev only), `EnableMockPayments` (dev/demo only) |
 | `App:PublicWebUrl` | Front-end URL used in public business links (`/b/{slug}`) |
-| `Cors:AllowedOrigins` | Allowed front-end origins |
+| `Cors:AllowedOrigins` | Allowed front-end origins. `*` inside a host label is a wildcard (e.g. `https://agenda-pro-front-*.vercel.app` for Vercel previews); a lone `"*"` allows any origin |
+| `RateLimits:AuthPerMinute` | Requests per minute per IP on `/api/auth/*` |
 | `Database` | `MigrateOnStartup`, `SeedDemoData` (true in Development) |
 | `Notifications` | `SmsProvider`: `Console` (logs only) or `Http` + your SMS gateway URL/key |
 | `AI` | `Provider`: `None` (rule-based, understands FR / AR / darija keywords) or `Anthropic` + `ApiKey` |

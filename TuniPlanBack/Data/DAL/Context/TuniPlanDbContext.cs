@@ -33,6 +33,15 @@ public class TuniPlanDbContext(DbContextOptions<TuniPlanDbContext> options) : Db
     public DbSet<AiConversation> AiConversations => Set<AiConversation>();
     public DbSet<AiMessage> AiMessages => Set<AiMessage>();
 
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        base.ConfigureConventions(configurationBuilder);
+        // SQL Server datetime2 has no kind: every DateTime is stored as UTC and read back as DateTimeKind.Utc,
+        // so the API serializes it with a trailing "Z" and the front-end converts it correctly.
+        configurationBuilder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
+        configurationBuilder.Properties<DateTime?>().HaveConversion<NullableUtcDateTimeConverter>();
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

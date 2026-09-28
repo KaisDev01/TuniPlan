@@ -48,7 +48,8 @@ public sealed record DayAvailabilityDto(DateOnly Date, bool IsOpen, IReadOnlyLis
 
 public sealed record AvailabilityQuery
 {
-    [Required] public Guid ServiceId { get; init; }
+    /// <summary>Optional: when omitted, the first active service of the business (by display order) is used.</summary>
+    public Guid? ServiceId { get; init; }
     public Guid? ResourceId { get; init; }
     public DateOnly? From { get; init; }
     [Range(1, 31)] public int Days { get; init; } = 7;
