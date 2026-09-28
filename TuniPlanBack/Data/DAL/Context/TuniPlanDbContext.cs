@@ -13,6 +13,8 @@ public class TuniPlanDbContext(DbContextOptions<TuniPlanDbContext> options) : Db
     public DbSet<FamilyMember> FamilyMembers => Set<FamilyMember>();
     public DbSet<Favorite> Favorites => Set<Favorite>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<UserDevice> UserDevices => Set<UserDevice>();
+    public DbSet<ExternalLogin> ExternalLogins => Set<ExternalLogin>();
 
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<OrganizationMember> OrganizationMembers => Set<OrganizationMember>();
@@ -32,6 +34,15 @@ public class TuniPlanDbContext(DbContextOptions<TuniPlanDbContext> options) : Db
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<AiConversation> AiConversations => Set<AiConversation>();
     public DbSet<AiMessage> AiMessages => Set<AiMessage>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        base.ConfigureConventions(configurationBuilder);
+        // SQL Server datetime2 has no kind: every DateTime is stored as UTC and read back as DateTimeKind.Utc,
+        // so the API serializes it with a trailing "Z" and the front-end converts it correctly.
+        configurationBuilder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
+        configurationBuilder.Properties<DateTime?>().HaveConversion<NullableUtcDateTimeConverter>();
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -71,6 +82,8 @@ public class TuniPlanDbContext(DbContextOptions<TuniPlanDbContext> options) : Db
         (typeof(User), typeof(FamilyMember)),
         (typeof(User), typeof(Favorite)),
         (typeof(User), typeof(Notification)),
+        (typeof(User), typeof(UserDevice)),
+        (typeof(User), typeof(ExternalLogin)),
         (typeof(Organization), typeof(OrganizationPhoto)),
         (typeof(Organization), typeof(OpeningHour)),
         (typeof(Service), typeof(ServiceResource)),

@@ -1,4 +1,5 @@
 using BL.Availability;
+using BL.Interfaces;
 using BL.Options;
 using Common.Exceptions;
 using Common.Helpers;
@@ -19,21 +20,30 @@ public interface IAvailabilityManager
     Task<IReadOnlyList<SlotDto>> GetNextSlotsAsync(Organization organization, Service service, int count, int days = 14,
         Guid? resourceId = null, CancellationToken ct = default);
 
+    /// <summary>Periods when one resource is taken (bookings + closed periods), for a date-range picker (rental).</summary>
+    Task<IReadOnlyList<BookedPeriodDto>> GetResourceBookingsAsync(Guid organizationId, Guid resourceId, ResourceBookingsQuery query, CancellationToken ct = default);
+
     /// <summary>Returns the free resources for an exact slot, or null if the slot is not bookable.</summary>
     Task<IReadOnlyList<Guid>?> CheckSlotAsync(Organization organization, Service service, DateTime startUtc, Guid? resourceId,
         Guid? excludeAppointmentId = null, CancellationToken ct = default);
 }
 
-public sealed class AvailabilityManager(IUnitOfWork uow, IClock clock, IOptions<AppOptions> appOptions) : IAvailabilityManager
+public sealed class AvailabilityManager(IUnitOfWork uow, ICurrentUser currentUser, IClock clock, IOptions<AppOptions> appOptions) : IAvailabilityManager
 {
     public async Task<IReadOnlyList<DayAvailabilityDto>> GetAvailabilityAsync(Guid organizationId, AvailabilityQuery query, CancellationToken ct = default)
     {
         var org = await uow.Organizations.QueryNoTracking().Include(o => o.OpeningHours)
                       .FirstOrDefaultAsync(o => o.Id == organizationId, ct)
                   ?? throw new NotFoundException("Entreprise introuvable.");
-        var service = await uow.Services.QueryNoTracking().Include(s => s.ServiceResources)
-                          .FirstOrDefaultAsync(s => s.Id == query.ServiceId && s.OrganizationId == organizationId && s.IsActive, ct)
-                      ?? throw new NotFoundException("Prestation introuvable.");
+        // Unpublished businesses are invisible to the public (same rule as the business page)
+        if (!org.IsPublished && !await CanSeeUnpublishedAsync(org.Id, ct)) throw new NotFoundException("Entreprise introuvable.");
+
+        var services = uow.Services.QueryNoTracking().Include(s => s.ServiceResources)
+            .Where(s => s.OrganizationId == organizationId && s.IsActive);
+        var service = query.ServiceId is { } serviceId
+            ? await services.FirstOrDefaultAsync(s => s.Id == serviceId, ct) ?? throw new NotFoundException("Prestation introuvable.")
+            : await services.OrderBy(s => s.SortOrder).ThenBy(s => s.Name).FirstOrDefaultAsync(ct);
+        if (service is null) return []; // no active service yet: nothing can be booked
 
         var tz = TimeZoneHelper.Find(org.TimeZoneId);
         var today = DateOnly.FromDateTime(TimeZoneHelper.ToLocal(clock.UtcNow, tz));
@@ -44,6 +54,9 @@ public sealed class AvailabilityManager(IUnitOfWork uow, IClock clock, IOptions<
         return await ComputeAsync(org, service, from, days, query.ResourceId, null, ct);
     }
 
+    private async Task<bool> CanSeeUnpublishedAsync(Guid orgId, CancellationToken ct) =>
+        currentUser.UserId is { } uid && (currentUser.IsInRole(Roles.Admin) || await uow.Organizations.IsMemberAsync(orgId, uid, null, ct));
+
     public async Task<IReadOnlyList<SlotDto>> GetNextSlotsAsync(Organization organization, Service service, int count, int days = 14,
         Guid? resourceId = null, CancellationToken ct = default)
     {
@@ -51,6 +64,39 @@ public sealed class AvailabilityManager(IUnitOfWork uow, IClock clock, IOptions<
         var today = DateOnly.FromDateTime(TimeZoneHelper.ToLocal(clock.UtcNow, tz));
         var result = await ComputeAsync(organization, service, today, days, resourceId, null, ct);
         return result.SelectMany(d => d.Slots).Take(count).ToList();
+    }
+
+    private const int MaxBookingsRangeDays = 93;
+
+    public async Task<IReadOnlyList<BookedPeriodDto>> GetResourceBookingsAsync(Guid organizationId, Guid resourceId, ResourceBookingsQuery query, CancellationToken ct = default)
+    {
+        var org = await uow.Organizations.QueryNoTracking().FirstOrDefaultAsync(o => o.Id == organizationId, ct)
+                  ?? throw new NotFoundException("Entreprise introuvable.");
+        if (!org.IsPublished && !await CanSeeUnpublishedAsync(org.Id, ct)) throw new NotFoundException("Entreprise introuvable.");
+        if (!await uow.Resources.AnyAsync(r => r.Id == resourceId && r.OrganizationId == organizationId, ct))
+            throw new NotFoundException("Ressource introuvable.");
+
+        var tz = TimeZoneHelper.Find(org.TimeZoneId);
+        var from = query.From ?? DateOnly.FromDateTime(TimeZoneHelper.ToLocal(clock.UtcNow, tz));
+        var to = query.To ?? from.AddDays(90);
+        if (to < from || to.DayNumber - from.DayNumber > MaxBookingsRangeDays)
+            throw ValidationException.For(nameof(query.To), $"Période invalide ({MaxBookingsRangeDays} jours maximum).");
+        var rangeStart = TimeZoneHelper.ToUtc(from, TimeOnly.MinValue, tz);
+        var rangeEnd = TimeZoneHelper.ToUtc(to.AddDays(1), TimeOnly.MinValue, tz);
+
+        var bookings = (await uow.Appointments.GetBusyAsync(organizationId, rangeStart, rangeEnd, ct))
+            .Where(a => a.ResourceId == resourceId)
+            .Select(a => (a.StartUtc, a.EndUtc, Kind: "booking"));
+        var closed = (await uow.ClosedPeriods.ListAsync(c => c.OrganizationId == organizationId
+                          && (c.ResourceId == null || c.ResourceId == resourceId) && c.StartUtc < rangeEnd && c.EndUtc > rangeStart, ct))
+            .Select(c => (c.StartUtc, c.EndUtc, Kind: "closed"));
+
+        DateOnly Day(DateTime utc) => DateOnly.FromDateTime(TimeZoneHelper.ToLocal(utc, tz));
+        return bookings.Concat(closed)
+            .OrderBy(p => p.StartUtc)
+            // The end is exclusive: a rental ending at midnight does not take the next day
+            .Select(p => new BookedPeriodDto(p.StartUtc, p.EndUtc, Day(p.StartUtc), Day(p.EndUtc.AddTicks(-1)), p.Kind))
+            .ToList();
     }
 
     public async Task<IReadOnlyList<Guid>?> CheckSlotAsync(Organization organization, Service service, DateTime startUtc, Guid? resourceId,

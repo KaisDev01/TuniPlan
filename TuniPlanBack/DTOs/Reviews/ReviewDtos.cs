@@ -6,7 +6,14 @@ namespace DTOs.Reviews;
 public sealed record ReviewDto
 {
     public Guid Id { get; init; }
+    public Guid OrganizationId { get; init; }
+    public string? OrganizationName { get; init; }
+    public Guid AppointmentId { get; init; }
+    /// <summary>"Prénom N." or "Client anonyme" when <see cref="IsAnonymous"/> (also for the business).</summary>
     public string ClientName { get; init; } = default!;
+    public bool IsAnonymous { get; init; }
+    /// <summary>True when the connected user wrote this review (can edit / delete it).</summary>
+    public bool IsMine { get; init; }
     public int Rating { get; init; }
     public int? RatingWelcome { get; init; }
     public int? RatingPunctuality { get; init; }
@@ -16,6 +23,10 @@ public sealed record ReviewDto
     public IReadOnlyList<string> PhotoUrls { get; init; } = [];
     public string? ServiceName { get; init; }
     public DateTime CreatedAt { get; init; }
+    /// <summary>Last edit by the author, null if never edited.</summary>
+    public DateTime? UpdatedAt { get; init; }
+    /// <summary>Until when the author can still edit it (null when not <see cref="IsMine"/>).</summary>
+    public DateTime? EditableUntil { get; init; }
     public string? OwnerReply { get; init; }
     public DateTime? OwnerReplyAt { get; init; }
     public bool Verified { get; init; } = true;
@@ -41,16 +52,26 @@ public sealed record ReviewQuery : PageQuery
     public Guid? ServiceId { get; init; }
 }
 
-public sealed record CreateReviewRequest
+public sealed record CreateReviewRequest : ReviewContentRequest
 {
     [Required] public Guid AppointmentId { get; init; }
+}
+
+/// <summary>PUT /api/reviews/{id}: same fields as the creation, without the appointment.</summary>
+public sealed record UpdateReviewRequest : ReviewContentRequest;
+
+public abstract record ReviewContentRequest
+{
     [Range(1, 5)] public int Rating { get; init; }
     [Range(1, 5)] public int? RatingWelcome { get; init; }
     [Range(1, 5)] public int? RatingPunctuality { get; init; }
     [Range(1, 5)] public int? RatingQuality { get; init; }
     [Range(1, 5)] public int? RatingValue { get; init; }
     [Required, StringLength(2000, MinimumLength = 20)] public string Comment { get; init; } = default!;
+    /// <summary>Up to 3 URLs returned by POST /api/reviews/photos.</summary>
     [MaxLength(3)] public IReadOnlyList<string> PhotoUrls { get; init; } = [];
+    /// <summary>Hide the author's name: shown as "Client anonyme" everywhere.</summary>
+    public bool IsAnonymous { get; init; }
 }
 
 public sealed record ReplyReviewRequest
@@ -68,4 +89,16 @@ public sealed record BusinessReviewDto
     public ReviewDto Review { get; init; } = default!;
     public bool IsNew { get; init; }
     public bool IsReported { get; init; }
+}
+
+public sealed record ReviewPhotoDto(string Url);
+
+/// <summary>Moderation view of a reported review.</summary>
+public sealed record AdminReviewDto
+{
+    public ReviewDto Review { get; init; } = default!;
+    /// <summary>Real author, even for an anonymous review (admins only).</summary>
+    public Guid ClientUserId { get; init; }
+    public string? ReportReason { get; init; }
+    public bool IsHidden { get; init; }
 }

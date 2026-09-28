@@ -33,6 +33,8 @@ public interface IUnitOfWork
     IGenericRepository<Notification> Notifications { get; }
     IGenericRepository<AiConversation> AiConversations { get; }
     IGenericRepository<AiMessage> AiMessages { get; }
+    IGenericRepository<UserDevice> UserDevices { get; }
+    IGenericRepository<ExternalLogin> ExternalLogins { get; }
 
     /// <summary>Any other entity.</summary>
     IGenericRepository<T> Repository<T>() where T : class;

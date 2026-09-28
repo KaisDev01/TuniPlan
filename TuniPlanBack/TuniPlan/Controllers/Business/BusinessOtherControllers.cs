@@ -56,12 +56,25 @@ public sealed class BusinessReviewsController(IReviewManager reviews) : Controll
         Ok(await reviews.ReplyAsync(orgId, reviewId, request, ct));
 }
 
-/// <summary>Platform administration: verification of businesses.</summary>
+/// <summary>Platform administration: verification of businesses, moderation of reviews.</summary>
 [ApiController]
 [Route("api/admin")]
 [Authorize(Roles = Roles.Admin)]
-public sealed class AdminController(IOrganizationManager organizations) : ControllerBase
+public sealed class AdminController(IOrganizationManager organizations, IReviewManager reviews) : ControllerBase
 {
+    /// <summary>Reviews reported by users, most recent first.</summary>
+    [HttpGet("reviews/reported")]
+    public async Task<ActionResult<PagedResult<AdminReviewDto>>> ReportedReviews([FromQuery] PageQuery page, CancellationToken ct) =>
+        Ok(await reviews.GetReportedAsync(page.Page, page.PageSize, ct));
+
+    /// <summary>Removes a review (moderation). The business rating is recomputed.</summary>
+    [HttpDelete("reviews/{reviewId:guid}")]
+    public async Task<IActionResult> DeleteReview(Guid reviewId, CancellationToken ct)
+    {
+        await reviews.DeleteByAdminAsync(reviewId, ct);
+        return NoContent();
+    }
+
     [HttpGet("verifications")]
     public async Task<ActionResult<IReadOnlyList<MyOrganizationDto>>> Pending(CancellationToken ct) =>
         Ok(await organizations.GetPendingVerificationsAsync(ct));

@@ -54,3 +54,14 @@ public static class Roles
         if (roles.HasFlag(AccountRoles.Admin)) yield return Admin;
     }
 }
+
+/// <summary>Identity confirmed by Google or Facebook.</summary>
+public sealed record ExternalIdentity(ExternalProvider Provider, string ProviderKey, string? Email, bool EmailVerified, string? FirstName, string? LastName);
+
+/// <summary>Checks a Google ID token / Facebook access token with the provider (implemented in the API).</summary>
+public interface IExternalIdentityVerifier
+{
+    bool IsConfigured(ExternalProvider provider);
+    /// <returns>Null when the token is invalid, expired or issued for another app.</returns>
+    Task<ExternalIdentity?> VerifyAsync(ExternalProvider provider, string token, CancellationToken ct = default);
+}

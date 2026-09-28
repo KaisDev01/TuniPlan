@@ -4,7 +4,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- XML comments are shown in the OpenAPI document (Scalar); missing comments are not warnings -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
     <Company>TuniPlan</Company>
     <Product>TuniPlan API</Product>
   </PropertyGroup>

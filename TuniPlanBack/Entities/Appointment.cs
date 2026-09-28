@@ -34,6 +34,10 @@ public class Appointment : BaseEntity
     public string? BusinessNote { get; set; }
     public string? CancelReason { get; set; }
     public string? AiSummary { get; set; }
+    /// <summary>Business voice note (POST .../voice-note): speech-to-text result.</summary>
+    public string? VoiceNoteTranscript { get; set; }
+    /// <summary>Short summary of the voice note (LLM, or the beginning of the transcript without an LLM).</summary>
+    public string? VoiceNoteSummary { get; set; }
 
     // Counter-offer from the business
     public DateTime? ProposedStartUtc { get; set; }
@@ -61,7 +65,7 @@ public class Appointment : BaseEntity
         Status is AppointmentStatus.Pending or AppointmentStatus.Confirmed or AppointmentStatus.CounterProposed;
 }
 
-public class Review : BaseEntity
+public class Review : BaseEntity, ISoftDelete
 {
     public Guid OrganizationId { get; set; }
     public Organization Organization { get; set; } = default!;
@@ -84,6 +88,14 @@ public class Review : BaseEntity
     public bool IsReported { get; set; }
     public string? ReportReason { get; set; }
     public bool IsHidden { get; set; }
+
+    /// <summary>Shown as "Client anonyme" everywhere, including to the business.</summary>
+    public bool IsAnonymous { get; set; }
+    /// <summary>Last change made by the author (UpdatedAt also changes on owner reply or report).</summary>
+    public DateTime? EditedAt { get; set; }
+
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
 }
 
 public class Payment : BaseEntity

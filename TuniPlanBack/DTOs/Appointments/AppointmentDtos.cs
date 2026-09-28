@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using Entities.Enums;
 
@@ -30,6 +31,10 @@ public sealed record AppointmentDto
     /// <summary>Only filled for the business.</summary>
     public string? BusinessNote { get; init; }
     public string? AiSummary { get; init; }
+    /// <summary>Business only: text of the last voice note (POST .../voice-note).</summary>
+    public string? VoiceNoteTranscript { get; init; }
+    /// <summary>Business only: short summary of the last voice note.</summary>
+    public string? VoiceNoteSummary { get; init; }
     public string? CancelReason { get; init; }
     public DateTime? ProposedStartUtc { get; init; }
     public DateTime? ProposedEndUtc { get; init; }
@@ -101,10 +106,13 @@ public sealed record WalkInRequest
     public AppointmentSource Source { get; init; } = AppointmentSource.WalkIn;
 }
 
+/// <summary>Business agenda filter. The period From..To is inclusive and limited to 62 days (otherwise 400).</summary>
 public sealed record AgendaQuery
 {
-    [Required] public DateOnly From { get; init; }
-    [Required] public DateOnly To { get; init; }
+    /// <summary>First local day (yyyy-MM-dd), business time zone.</summary>
+    [Required, Description("First local day (yyyy-MM-dd).")] public DateOnly From { get; init; }
+    /// <summary>Last local day (yyyy-MM-dd), inclusive. At most 62 days after From.</summary>
+    [Required, Description("Last local day (yyyy-MM-dd), inclusive. At most 62 days after From, otherwise 400 validation error.")] public DateOnly To { get; init; }
     public Guid? ResourceId { get; init; }
     public AppointmentStatus? Status { get; init; }
 }

@@ -45,6 +45,12 @@ public sealed class OrganizationsController(
     public async Task<ActionResult<IReadOnlyList<DayAvailabilityDto>>> Availability(Guid id, [FromQuery] AvailabilityQuery query, CancellationToken ct) =>
         Ok(await availability.GetAvailabilityAsync(id, query, ct));
 
+    /// <summary>Periods already taken for one resource (e.g. rental dates of a vehicle), to grey out a date picker. 93 days max.</summary>
+    [HttpGet("{id:guid}/resources/{resourceId:guid}/bookings")]
+    public async Task<ActionResult<IReadOnlyList<BookedPeriodDto>>> ResourceBookings(Guid id, Guid resourceId,
+        [FromQuery] ResourceBookingsQuery query, CancellationToken ct) =>
+        Ok(await availability.GetResourceBookingsAsync(id, resourceId, query, ct));
+
     [HttpGet("{id:guid}/reviews")]
     public async Task<ActionResult<PagedResult<ReviewDto>>> Reviews(Guid id, [FromQuery] ReviewQuery query, CancellationToken ct) =>
         Ok(await reviews.GetForOrganizationAsync(id, query, ct));

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 
@@ -18,15 +19,24 @@ internal sealed class BearerSecuritySchemeTransformer : IOpenApiDocumentTransfor
             In = ParameterLocation.Header,
             Description = "Access token returned by /api/auth/login (valid 15 minutes)."
         };
+        return Task.CompletedTask;
+    }
+}
 
-        foreach (var operation in document.Paths.Values.Where(p => p.Operations is not null).SelectMany(p => p.Operations!))
+/// <summary>Requires the Bearer token only on protected operations: [AllowAnonymous] routes stay public in Scalar.</summary>
+internal sealed class BearerSecurityOperationTransformer : IOpenApiOperationTransformer
+{
+    public Task TransformAsync(OpenApiOperation operation, OpenApiOperationTransformerContext context, CancellationToken cancellationToken)
+    {
+        if (context.Description.ActionDescriptor.EndpointMetadata.OfType<IAllowAnonymous>().Any()) return Task.CompletedTask;
+
+        operation.Security ??= [];
+        operation.Security.Add(new OpenApiSecurityRequirement
         {
-            operation.Value.Security ??= [];
-            operation.Value.Security.Add(new OpenApiSecurityRequirement
-            {
-                [new OpenApiSecuritySchemeReference("Bearer", document)] = []
-            });
-        }
+            [new OpenApiSecuritySchemeReference("Bearer", context.Document)] = []
+        });
+        operation.Responses ??= new OpenApiResponses();
+        operation.Responses.TryAdd("401", new OpenApiResponse { Description = "Missing, expired or revoked access token." });
         return Task.CompletedTask;
     }
 }

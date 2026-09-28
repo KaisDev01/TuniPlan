@@ -110,3 +110,27 @@ public class AuditLog : BaseEntity
     public string? IpAddress { get; set; }
     public string? UserAgent { get; set; }
 }
+
+/// <summary>Expo push token of one phone / browser of the user (POST /api/account/devices).</summary>
+public class UserDevice : BaseEntity
+{
+    public Guid UserId { get; set; }
+    public User User { get; set; } = default!;
+    /// <summary>"ExponentPushToken[...]" — unique: a token moves to the last account logged in on the device.</summary>
+    public string Token { get; set; } = default!;
+    /// <summary>ios | android | web</summary>
+    public string? Platform { get; set; }
+    public string? DeviceName { get; set; }
+    public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>Google / Facebook identity linked to an account (POST /api/auth/external).</summary>
+public class ExternalLogin : BaseEntity
+{
+    public Guid UserId { get; set; }
+    public User User { get; set; } = default!;
+    public ExternalProvider Provider { get; set; }
+    /// <summary>Stable user id at the provider ("sub" for Google, user id for Facebook).</summary>
+    public string ProviderKey { get; set; } = default!;
+    public string? Email { get; set; }
+}

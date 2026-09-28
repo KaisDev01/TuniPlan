@@ -36,6 +36,11 @@ public interface IOrganizationManager
     Task<MyOrganizationDto> DeletePhotoAsync(Guid id, string url, CancellationToken ct = default);
     Task<ProfileCompletionDto> GetCompletionAsync(Guid id, CancellationToken ct = default);
     Task<PublicLinkDto> GetPublicLinkAsync(Guid id, CancellationToken ct = default);
+    Task DeleteAsync(Guid id, CancellationToken ct = default);
+    Task TransferOwnershipAsync(Guid id, TransferOrganizationRequest request, CancellationToken ct = default);
+    Task<IReadOnlyList<MemberDto>> GetMembersAsync(Guid id, CancellationToken ct = default);
+    Task<MemberDto> AddMemberAsync(Guid id, AddMemberRequest request, CancellationToken ct = default);
+    Task RemoveMemberAsync(Guid id, Guid userId, CancellationToken ct = default);
 
     Task<IReadOnlyList<ClosedPeriodDto>> GetClosedPeriodsAsync(Guid id, DateTime? fromUtc, CancellationToken ct = default);
     Task<ClosedPeriodDto> AddClosedPeriodAsync(Guid id, CreateClosedPeriodRequest request, CancellationToken ct = default);
@@ -53,6 +58,7 @@ public sealed class OrganizationManager(
     IAvailabilityManager availability,
     IFileStorage storage,
     INotificationManager notifications,
+    IAuditManager audit,
     IClock clock,
     IOptions<AppOptions> appOptions) : IOrganizationManager
 {
@@ -186,7 +192,7 @@ public sealed class OrganizationManager(
             IsVerified = org.VerificationStatus == VerificationStatus.Verified,
             IsFavorite = favorites.Contains(org.Id),
             ReviewSummary = summary,
-            LatestReviews = latest.Select(r => r.ToDto()).ToList(),
+            LatestReviews = latest.Select(r => r.ToDto(currentUser.UserId, appOptions.Value.ReviewEditWindowDays)).ToList(),
             NextSlots = nextSlots
         };
     }
@@ -479,6 +485,125 @@ public sealed class OrganizationManager(
     }
 
     private string PublicUrl(Organization org) => $"{appOptions.Value.PublicWebUrl.TrimEnd('/')}/b/{org.Slug}";
+
+    // =========================================================== Delete / transfer
+    /// <summary>Soft delete: upcoming bookings are cancelled (clients notified), members and favorites are removed, the slug is freed.</summary>
+    public async Task DeleteAsync(Guid id, CancellationToken ct = default)
+    {
+        await access.EnsureMemberAsync(id, ownerOnly: true, ct);
+        var org = await uow.Organizations.FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw new NotFoundException("Entreprise introuvable.");
+        var now = clock.UtcNow;
+
+        var upcoming = await uow.Appointments.Query()
+            .Where(a => a.OrganizationId == id && a.StartUtc > now
+                        && (a.Status == AppointmentStatus.Pending || a.Status == AppointmentStatus.Confirmed || a.Status == AppointmentStatus.CounterProposed))
+            .ToListAsync(ct);
+        foreach (var a in upcoming)
+        {
+            a.Status = AppointmentStatus.CancelledByBusiness;
+            a.CancelledAt = now;
+            a.CancelReason = "Entreprise fermée sur TuniPlan";
+            if (a.ClientUserId is { } clientId)
+                await notifications.NotifyAsync(clientId, NotificationType.Cancellation, "Rendez-vous annulé",
+                    $"{org.Name} n'est plus disponible sur TuniPlan : votre rendez-vous a été annulé.", a.Id, id, ct);
+        }
+
+        // Tracked queries (ListAsync is no-tracking): these rows are deleted with the SaveChanges below
+        uow.OrganizationMembers.RemoveRange(await uow.OrganizationMembers.Query().Where(m => m.OrganizationId == id).ToListAsync(ct));
+        uow.Favorites.RemoveRange(await uow.Favorites.Query().Where(f => f.OrganizationId == id).ToListAsync(ct));
+        uow.Waitlist.RemoveRange(await uow.Waitlist.Query().Where(w => w.OrganizationId == id).ToListAsync(ct));
+
+        org.IsPublished = false;
+        org.Slug = $"deleted-{org.Id:N}"; // the unique slug can be reused by a new business
+        org.IsDeleted = true;
+        org.DeletedAt = now;
+        await audit.AddAsync("organization_deleted", currentUser.UserId, $"{org.Id} {org.Name}", ct);
+        await uow.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Gives the business to another account. The previous owner(s) stay as staff.</summary>
+    public async Task TransferOwnershipAsync(Guid id, TransferOrganizationRequest request, CancellationToken ct = default)
+    {
+        await access.EnsureMemberAsync(id, ownerOnly: true, ct);
+        var org = await uow.Organizations.QueryNoTracking().FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw new NotFoundException("Entreprise introuvable.");
+
+        var newOwner = await FindActiveUserAsync(request.NewOwnerIdentifier, nameof(request.NewOwnerIdentifier), ct);
+        if (!newOwner.Roles.HasFlag(AccountRoles.Business))
+            throw new BusinessRuleException("Le nouveau propriétaire doit d'abord activer le mode professionnel.", "business_mode_required");
+
+        var members = await uow.OrganizationMembers.Query().Where(m => m.OrganizationId == id).ToListAsync(ct); // tracked: roles change below
+        var target = members.FirstOrDefault(m => m.UserId == newOwner.Id);
+        if (target?.Role == MemberRole.Owner) throw new ConflictException("Ce compte est déjà propriétaire de l'entreprise.");
+        if (await uow.OrganizationMembers.CountAsync(m => m.UserId == newOwner.Id && m.Role == MemberRole.Owner, ct) >= 5)
+            throw new BusinessRuleException("Le nouveau propriétaire a déjà 5 établissements.");
+
+        foreach (var owner in members.Where(m => m.Role == MemberRole.Owner)) owner.Role = MemberRole.Staff;
+        if (target is null) await uow.OrganizationMembers.AddAsync(new OrganizationMember { OrganizationId = id, UserId = newOwner.Id, Role = MemberRole.Owner }, ct);
+        else target.Role = MemberRole.Owner;
+
+        await notifications.NotifyAsync(newOwner.Id, NotificationType.General, "Nouvelle entreprise",
+            $"Vous êtes maintenant propriétaire de {org.Name} sur TuniPlan.", null, id, ct);
+        await audit.AddAsync("organization_transferred", currentUser.UserId, $"{id} -> {newOwner.Id}", ct);
+        await uow.SaveChangesAsync(ct);
+    }
+
+    private async Task<User> FindActiveUserAsync(string identifier, string field, CancellationToken ct)
+    {
+        var value = identifier.Trim();
+        var user = PhoneNumberHelper.LooksLikeEmail(value)
+            ? await uow.Users.GetByEmailAsync(value.ToLowerInvariant(), ct)
+            : PhoneNumberHelper.NormalizeTunisian(value) is { } phone ? await uow.Users.GetByPhoneAsync(phone, ct) : null;
+        if (user is null || !user.IsActive) throw ValidationException.For(field, "Aucun compte actif ne correspond à cet identifiant.");
+        return user;
+    }
+
+    // =========================================================== Team (multi-user)
+    public async Task<IReadOnlyList<MemberDto>> GetMembersAsync(Guid id, CancellationToken ct = default)
+    {
+        await access.EnsureMemberAsync(id, ct: ct);
+        var members = await uow.OrganizationMembers.QueryNoTracking().Include(m => m.User)
+            .Where(m => m.OrganizationId == id).OrderBy(m => m.Role).ThenBy(m => m.CreatedAt).ToListAsync(ct);
+        return members.Select(ToMemberDto).ToList();
+    }
+
+    private MemberDto ToMemberDto(OrganizationMember m) =>
+        new(m.UserId, m.User.FullName, m.User.Email, PhoneNumberHelper.Mask(m.User.PhoneNumber), m.Role, m.CreatedAt, m.UserId == currentUser.UserId);
+
+    public async Task<MemberDto> AddMemberAsync(Guid id, AddMemberRequest request, CancellationToken ct = default)
+    {
+        await access.EnsureMemberAsync(id, ownerOnly: true, ct);
+        var org = await uow.Organizations.QueryNoTracking().FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw new NotFoundException("Entreprise introuvable.");
+        var user = await FindActiveUserAsync(request.Identifier, nameof(request.Identifier), ct);
+        if (await uow.OrganizationMembers.AnyAsync(m => m.OrganizationId == id && m.UserId == user.Id, ct))
+            throw new ConflictException("Ce compte fait déjà partie de l'équipe.", "already_member");
+        if (request.Role == MemberRole.Owner
+            && await uow.OrganizationMembers.CountAsync(m => m.UserId == user.Id && m.Role == MemberRole.Owner, ct) >= 5)
+            throw new BusinessRuleException("Ce compte est déjà propriétaire de 5 établissements.");
+
+        // The business screens need the Business role: it is added now and appears in the next access token (refresh)
+        if (!user.Roles.HasFlag(AccountRoles.Business)) user.Roles |= AccountRoles.Business;
+        var member = new OrganizationMember { OrganizationId = id, UserId = user.Id, Role = request.Role, User = user };
+        await uow.OrganizationMembers.AddAsync(member, ct);
+        await notifications.NotifyAsync(user.Id, NotificationType.General, "Nouvelle équipe",
+            $"Vous avez été ajouté à l'équipe de {org.Name} sur TuniPlan.", null, id, ct);
+        await audit.AddAsync("organization_member_added", currentUser.UserId, $"{id} + {user.Id} ({request.Role})", ct);
+        await uow.SaveChangesAsync(ct);
+        return ToMemberDto(member);
+    }
+
+    /// <summary>Owners remove anyone; a staff member can remove himself (leave). The last owner cannot be removed.</summary>
+    public async Task RemoveMemberAsync(Guid id, Guid userId, CancellationToken ct = default)
+    {
+        var leaving = currentUser.UserId == userId;
+        await access.EnsureMemberAsync(id, ownerOnly: !leaving, ct);
+        var members = await uow.OrganizationMembers.Query().Where(m => m.OrganizationId == id).ToListAsync(ct); // tracked: roles change below
+        var member = members.FirstOrDefault(m => m.UserId == userId) ?? throw new NotFoundException("Membre introuvable.");
+        if (member.Role == MemberRole.Owner && members.Count(m => m.Role == MemberRole.Owner) == 1)
+            throw new BusinessRuleException("Impossible de retirer le dernier propriétaire : transférez l'entreprise ou supprimez-la.", "last_owner");
+        uow.OrganizationMembers.Remove(member);
+        await audit.AddAsync("organization_member_removed", currentUser.UserId, $"{id} - {userId}", ct);
+        await uow.SaveChangesAsync(ct);
+    }
 
     // =========================================================== Closed periods (holidays, days off)
     public async Task<IReadOnlyList<ClosedPeriodDto>> GetClosedPeriodsAsync(Guid id, DateTime? fromUtc, CancellationToken ct = default)

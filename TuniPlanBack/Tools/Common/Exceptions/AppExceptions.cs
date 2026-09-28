@@ -60,6 +60,13 @@ public sealed class TooManyRequestsException(string message, string code = "too_
     public override int StatusCode => 429;
 }
 
+/// <summary>An optional external provider (transcription, Google / Facebook login...) is not configured on this server.</summary>
+public sealed class ServiceUnavailableException(string message, string code = "service_unavailable")
+    : AppException(message, code)
+{
+    public override int StatusCode => 503;
+}
+
 /// <summary>Account temporarily locked after too many failed logins.</summary>
 public sealed class AccountLockedException(DateTime lockoutEndUtc)
     : AppException("Compte temporairement verrouillé après plusieurs tentatives. Réessayez plus tard.", "account_locked")

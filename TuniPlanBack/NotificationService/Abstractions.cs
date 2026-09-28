@@ -17,10 +17,13 @@ public interface IEmailSender
     Task<bool> SendAsync(OutgoingMessage message, CancellationToken ct = default);
 }
 
+public sealed record PushMessage(string Title, string Body, IReadOnlyDictionary<string, string>? Data = null);
+
 public interface IPushSender
 {
-    /// <summary>Sends a push notification to all devices of the user (Expo push, FCM…).</summary>
-    Task<bool> SendAsync(Guid userId, string title, string body, CancellationToken ct = default);
+    /// <summary>Sends one notification to the given device tokens (Expo push tokens).</summary>
+    /// <returns>Tokens the provider reported as no longer valid (app uninstalled...): delete them.</returns>
+    Task<IReadOnlyList<string>> SendAsync(IReadOnlyList<string> tokens, PushMessage message, CancellationToken ct = default);
 }
 
 public sealed class NotificationOptions
@@ -33,4 +36,9 @@ public sealed class NotificationOptions
     public string SmsSenderName { get; set; } = "TuniPlan";
     public string? WhatsAppApiUrl { get; set; }
     public string? WhatsAppToken { get; set; }
+    /// <summary>"Console" (development: pushes are only logged) or "Expo" (Expo push service).</summary>
+    public string PushProvider { get; set; } = "Console";
+    public string ExpoPushUrl { get; set; } = "https://exp.host/--/api/v2/push/send";
+    /// <summary>Optional: only when "Enhanced push security" is enabled in the Expo project.</summary>
+    public string? ExpoAccessToken { get; set; }
 }

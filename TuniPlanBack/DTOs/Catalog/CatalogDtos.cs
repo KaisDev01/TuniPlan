@@ -48,7 +48,8 @@ public sealed record DayAvailabilityDto(DateOnly Date, bool IsOpen, IReadOnlyLis
 
 public sealed record AvailabilityQuery
 {
-    [Required] public Guid ServiceId { get; init; }
+    /// <summary>Optional: when omitted, the first active service of the business (by display order) is used.</summary>
+    public Guid? ServiceId { get; init; }
     public Guid? ResourceId { get; init; }
     public DateOnly? From { get; init; }
     [Range(1, 31)] public int Days { get; init; } = 7;
@@ -84,3 +85,18 @@ public sealed record UpsertPromotionRequest
     public bool IsLastMinute { get; init; }
     public bool IsActive { get; init; } = true;
 }
+
+/// <summary>GET /api/organizations/{id}/resources/{resourceId}/bookings: period (local days, business time zone), 93 days max.</summary>
+public sealed record ResourceBookingsQuery
+{
+    /// <summary>First local day (default: today).</summary>
+    public DateOnly? From { get; init; }
+    /// <summary>Last local day, inclusive (default: From + 90 days, at most From + 93 days).</summary>
+    public DateOnly? To { get; init; }
+}
+
+/// <summary>A period when the resource (vehicle, room, person) cannot be booked. No client information.</summary>
+/// <param name="FirstDay">First local day touched by the period.</param>
+/// <param name="LastDay">Last local day touched by the period (inclusive).</param>
+/// <param name="Kind">booking (appointment / rental) or closed (holiday, blocked time).</param>
+public sealed record BookedPeriodDto(DateTime StartUtc, DateTime EndUtc, DateOnly FirstDay, DateOnly LastDay, string Kind);

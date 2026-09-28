@@ -25,6 +25,32 @@ public sealed class ReviewsController(IReviewManager reviews) : ControllerBase
         await reviews.ReportAsync(id, request, ct);
         return NoContent();
     }
+
+    /// <summary>Reviews written by the connected user (including anonymous ones).</summary>
+    [HttpGet("mine")]
+    public async Task<ActionResult<PagedResult<ReviewDto>>> Mine([FromQuery] PageQuery query, CancellationToken ct) =>
+        Ok(await reviews.GetMineAsync(query.Page, query.PageSize, ct));
+
+    /// <summary>Author only (403 otherwise), during App:ReviewEditWindowDays days after posting (see editableUntil).</summary>
+    [HttpPut("{id:guid}")]
+    public async Task<ActionResult<ReviewDto>> Update(Guid id, UpdateReviewRequest request, CancellationToken ct) =>
+        Ok(await reviews.UpdateAsync(id, request, ct));
+
+    /// <summary>Author only (403 otherwise). The appointment gets hasReview = false and can be reviewed again.</summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        await reviews.DeleteAsync(id, ct);
+        return NoContent();
+    }
+
+    /// <summary>Uploads one review photo (JPG, PNG or WEBP, 5 MB, multipart field "file"). Put the returned url in photoUrls.</summary>
+    [HttpPost("photos"), RequestSizeLimit(6 * 1024 * 1024)]
+    public async Task<ActionResult<ReviewPhotoDto>> UploadPhoto(IFormFile file, CancellationToken ct)
+    {
+        await using var stream = file.OpenReadStream();
+        return StatusCode(StatusCodes.Status201Created, await reviews.UploadPhotoAsync(stream, file.FileName, file.ContentType, ct));
+    }
 }
 
 [ApiController]

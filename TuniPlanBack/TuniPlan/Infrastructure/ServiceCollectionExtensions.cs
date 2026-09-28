@@ -30,6 +30,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IUserSessionCache, UserSessionCache>();
         services.AddScoped<SecurityStampValidator>();
         services.AddSingleton<ISecretProtector, DataProtectionSecretProtector>();
+        services.Configure<ExternalAuthOptions>(configuration.GetSection(ExternalAuthOptions.Section));
+        services.AddHttpClient<IExternalIdentityVerifier, ExternalIdentityVerifier>(c => c.Timeout = TimeSpan.FromSeconds(10));
 
         // Keys that encrypt TOTP secrets: persisted to disk so they survive restarts (use Azure Key Vault / Redis in a farm).
         var keysPath = configuration["DataProtection:KeysPath"] ?? Path.Combine(env.ContentRootPath, "keys");
@@ -82,10 +84,11 @@ public static class ServiceCollectionExtensions
                     "{\"status\":429,\"title\":\"Trop de requêtes. Réessayez dans un instant.\",\"code\":\"rate_limited\"}", token);
             };
 
-            // Login / register / codes: 10 requests per minute per IP
+            // Login / register / codes: per IP (brute force is also stopped by account lockout and code attempt limits)
+            var authPermitLimit = configuration.GetValue("RateLimits:AuthPerMinute", 30);
             options.AddPolicy(AuthRateLimit, ctx => RateLimitPartition.GetFixedWindowLimiter(
                 ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 
             // AI secretary: 20 messages per minute per user
             options.AddPolicy(AiRateLimit, ctx => RateLimitPartition.GetFixedWindowLimiter(
@@ -99,16 +102,37 @@ public static class ServiceCollectionExtensions
         });
 
         var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-      services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
-{
-    // "*" = any website may call the API (safe here: auth uses Bearer tokens, not cookies)
-    if (origins.Contains("*")) p.AllowAnyOrigin();
-    else p.WithOrigins(origins);
-    p.WithMethods("GET", "POST", "PUT", "DELETE")
-     .WithHeaders("Authorization", "Content-Type", "Accept-Language")
-     .SetPreflightMaxAge(TimeSpan.FromHours(1));
-}));
+        services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
+        {
+            // "*" = any website may call the API (safe here: auth uses Bearer tokens, not cookies)
+            if (origins.Contains("*")) p.AllowAnyOrigin();
+            // Patterns such as "https://tuniplan-*.vercel.app" allow Vercel preview deployments
+            else p.SetIsOriginAllowed(origin => IsOriginAllowed(origin, origins));
+            p.WithMethods("GET", "POST", "PUT", "DELETE")
+             .WithHeaders("Authorization", "Content-Type", "Accept-Language")
+             .SetPreflightMaxAge(TimeSpan.FromHours(1));
+        }));
 
         return services;
+    }
+
+    /// <summary>Exact match, or a pattern where "*" stands for one or more characters of a single host label (no dot, no slash).</summary>
+    internal static bool IsOriginAllowed(string origin, IEnumerable<string> allowed)
+    {
+        var candidate = origin.TrimEnd('/');
+        foreach (var entry in allowed)
+        {
+            var pattern = entry.Trim().TrimEnd('/');
+            if (pattern.Length == 0) continue;
+            if (!pattern.Contains('*'))
+            {
+                if (string.Equals(pattern, candidate, StringComparison.OrdinalIgnoreCase)) return true;
+                continue;
+            }
+            var regex = "^" + string.Join("[a-z0-9-]+", pattern.Split('*').Select(System.Text.RegularExpressions.Regex.Escape)) + "$";
+            if (System.Text.RegularExpressions.Regex.IsMatch(candidate, regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return true;
+        }
+        return false;
     }
 }

@@ -204,6 +204,7 @@ public static class DependencyInjection
     public static IServiceCollection AddAiLayer(this IServiceCollection services)
     {
         services.AddScoped<ISecretaryAgent, SecretaryAgent>();
+        services.AddScoped<IVoiceNoteAssistant, VoiceNoteAssistant>();
         return services;
     }
 }

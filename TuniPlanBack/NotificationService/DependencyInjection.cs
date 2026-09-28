@@ -18,7 +18,10 @@ public static class DependencyInjection
 
         services.AddSingleton<IWhatsAppSender, ConsoleWhatsAppSender>();
         services.AddSingleton<IEmailSender, ConsoleEmailSender>();
-        services.AddSingleton<IPushSender, ConsolePushSender>();
+        if (string.Equals(section["PushProvider"], "Expo", StringComparison.OrdinalIgnoreCase))
+            services.AddHttpClient<IPushSender, ExpoPushSender>(c => c.Timeout = TimeSpan.FromSeconds(10));
+        else
+            services.AddSingleton<IPushSender, ConsolePushSender>();
         return services;
     }
 }

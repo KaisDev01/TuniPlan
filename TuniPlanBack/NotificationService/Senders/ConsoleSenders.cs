@@ -32,9 +32,9 @@ public sealed class ConsoleEmailSender(ILogger<ConsoleEmailSender> logger) : IEm
 
 public sealed class ConsolePushSender(ILogger<ConsolePushSender> logger) : IPushSender
 {
-    public Task<bool> SendAsync(Guid userId, string title, string body, CancellationToken ct = default)
+    public Task<IReadOnlyList<string>> SendAsync(IReadOnlyList<string> tokens, PushMessage message, CancellationToken ct = default)
     {
-        logger.LogInformation("[Push → {UserId}] {Title}: {Body}", userId, title, body);
-        return Task.FromResult(true);
+        logger.LogInformation("[Push → {Count} device(s)] {Title}: {Body}", tokens.Count, message.Title, message.Body);
+        return Task.FromResult<IReadOnlyList<string>>([]);
     }
 }

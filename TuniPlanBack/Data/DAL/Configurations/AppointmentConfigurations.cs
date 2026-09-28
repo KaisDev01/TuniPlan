@@ -16,6 +16,8 @@ public class AppointmentConfiguration : IEntityTypeConfiguration<Appointment>
         b.Property(x => x.CancelReason).HasMaxLength(500);
         b.Property(x => x.ProposalMessage).HasMaxLength(500);
         b.Property(x => x.AiSummary).HasMaxLength(2000);
+        b.Property(x => x.VoiceNoteTranscript).HasMaxLength(4000);
+        b.Property(x => x.VoiceNoteSummary).HasMaxLength(1000);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.Ignore(x => x.IsActiveBooking);
 
@@ -40,7 +42,8 @@ public class ReviewConfiguration : IEntityTypeConfiguration<Review>
         b.Property(x => x.Comment).HasMaxLength(2000).IsRequired();
         b.Property(x => x.OwnerReply).HasMaxLength(2000);
         b.Property(x => x.ReportReason).HasMaxLength(500);
-        b.HasIndex(x => x.AppointmentId).IsUnique();
+        // One live review per appointment: a deleted review lets the client write a new one
+        b.HasIndex(x => x.AppointmentId).IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x => new { x.OrganizationId, x.CreatedAt });
         b.HasOne(x => x.Appointment).WithOne(a => a.Review).HasForeignKey<Review>(x => x.AppointmentId);
         b.HasOne(x => x.Organization).WithMany().HasForeignKey(x => x.OrganizationId);
